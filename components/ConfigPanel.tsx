@@ -1,6 +1,6 @@
 import React from 'react';
 import { BotConfig, StrategyType, RiskLevel } from '../types';
-import { Settings, Sliders, Activity } from 'lucide-react';
+import { Settings, Sliders, Activity, MessageSquare, Layers } from 'lucide-react';
 
 interface ConfigPanelProps {
   config: BotConfig;
@@ -19,7 +19,11 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
     setConfig(prev => ({ ...prev, riskLevel: e.target.value as RiskLevel }));
   };
 
-  const toggleFeature = (key: keyof Pick<BotConfig, 'includeLogging' | 'includeWebsockets'>) => {
+  const handleGridLevelsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setConfig(prev => ({ ...prev, gridLevels: parseInt(e.target.value) || 5 }));
+  };
+
+  const toggleFeature = (key: keyof Pick<BotConfig, 'includeLogging' | 'includeWebsockets' | 'enableTelegram'>) => {
     setConfig(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
@@ -62,29 +66,58 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
         </select>
       </div>
 
+      {/* Grid Levels */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+          <Layers className="w-4 h-4" /> 網格層數 (Grid Levels)
+        </label>
+        <div className="flex items-center gap-3">
+            <input 
+              type="range" 
+              min="3" 
+              max="20" 
+              value={config.gridLevels} 
+              onChange={handleGridLevelsChange}
+              className="flex-1 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            />
+            <span className="text-slate-200 font-mono w-8 text-center">{config.gridLevels}</span>
+        </div>
+      </div>
+
       {/* Toggles */}
-      <div className="space-y-4 pt-2">
+      <div className="space-y-4 pt-2 border-t border-slate-700">
         <div className="flex items-center justify-between">
-          <span className="text-sm text-slate-300">啟用詳細日誌 (Detailed Logs)</span>
+          <span className="text-sm text-slate-300">啟用詳細日誌 (Logs)</span>
           <button 
             onClick={() => toggleFeature('includeLogging')}
-            className={`w-12 h-6 rounded-full transition-colors relative ${config.includeLogging ? 'bg-blue-600' : 'bg-slate-600'}`}
+            className={`w-10 h-5 rounded-full transition-colors relative ${config.includeLogging ? 'bg-blue-600' : 'bg-slate-600'}`}
           >
-            <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${config.includeLogging ? 'translate-x-6' : 'translate-x-0'}`} />
+            <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.includeLogging ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-sm text-slate-300">啟用 WebSocket 串流</span>
           <button 
             onClick={() => toggleFeature('includeWebsockets')}
-            className={`w-12 h-6 rounded-full transition-colors relative ${config.includeWebsockets ? 'bg-blue-600' : 'bg-slate-600'}`}
+            className={`w-10 h-5 rounded-full transition-colors relative ${config.includeWebsockets ? 'bg-blue-600' : 'bg-slate-600'}`}
           >
-            <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${config.includeWebsockets ? 'translate-x-6' : 'translate-x-0'}`} />
+            <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.includeWebsockets ? 'translate-x-5' : 'translate-x-0'}`} />
+          </button>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-slate-300 flex items-center gap-2">
+             <MessageSquare className="w-3 h-3" /> Telegram 通知
+          </span>
+          <button 
+            onClick={() => toggleFeature('enableTelegram')}
+            className={`w-10 h-5 rounded-full transition-colors relative ${config.enableTelegram ? 'bg-blue-600' : 'bg-slate-600'}`}
+          >
+            <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.enableTelegram ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
       </div>
 
-      <div className="mt-auto">
+      <div className="mt-auto pt-4">
         <button
           onClick={onGenerate}
           disabled={isGenerating}

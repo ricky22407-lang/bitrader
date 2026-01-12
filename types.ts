@@ -5,12 +5,13 @@ export interface BotConfig {
   riskLevel: RiskLevel;
   includeLogging: boolean;
   includeWebsockets: boolean;
+  enableTelegram: boolean;
+  gridLevels: number;
 }
 
 export enum StrategyType {
   MOMENTUM = '動能/趨勢跟蹤 (Momentum)',
   MEAN_REVERSION = '均值回歸 (Mean Reversion)',
-  ARBITRAGE = '套利策略 (Arbitrage)',
   AI_PREDICTION = 'AI/ML 預測模型 (AI Prediction)'
 }
 

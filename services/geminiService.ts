@@ -2,48 +2,52 @@ import { GoogleGenAI } from "@google/genai";
 import { BotConfig, GeneratedContent } from "../types";
 
 const SYSTEM_INSTRUCTION = `
-You are an expert Python developer for the Taiwan/Hong Kong market, specializing in Binance trading bots.
-Your role is to generate production-ready Python code where:
-1.  **Code Logic**: Uses standard English for variable names, functions, classes, and libraries (ccxt, pandas).
-2.  **Human Text**: ALL comments, docstrings, print statements, logging messages, and error descriptions MUST be in **Traditional Chinese (繁體中文)**.
-3.  **Tone**: Professional, clear, and technical.
+You are an expert Python Quantitative Developer specializing in Binance trading bots.
+Your goal is to generate a PRODUCTION-READY, SINGLE-FILE Python script.
+The code must be robust, modular, and extensively commented in TRADITIONAL CHINESE (繁體中文).
+The architecture must use 'backtrader' for the engine (supporting both backtest and live modes via logic separation) and 'ccxt' for data fetching concepts.
 `;
 
 export const generateBotStructure = async (config: BotConfig): Promise<GeneratedContent> => {
-  // Directly use process.env.API_KEY as per coding guidelines
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const prompt = `
-    Task: Create a complete, executable Python script for a Binance Crypto Trading Bot.
+    Task: Write a complete, advanced Python Crypto Trading Bot script.
+    
+    Configuration:
+    - Strategy: ${config.strategy}
+    - Pairs: ${config.pairs.join(", ")}
+    - Grid Levels: ${config.gridLevels}
+    - Risk Level: ${config.riskLevel}
+    - Features: ${config.includeWebsockets ? "WebSocket" : "REST"}, ${config.enableTelegram ? "Telegram Notification" : "Console Log Only"}
 
-    Context:
-    - 策略 (Strategy): ${config.strategy}
-    - 風險 (Risk): ${config.riskLevel}
-    - 交易對 (Pairs): ${config.pairs.join(", ")}
-    - 功能 (Features): ${config.includeWebsockets ? "WebSocket 即時數據流" : "REST API 輪詢"}, ${config.includeLogging ? "詳細日誌記錄 (Logging)" : "基本 Print 輸出"}.
+    Requirements for the Python Code:
+    1.  **Centralized Config Class**: Load ALL API keys (Binance, Gemini, Telegram) from \`os.getenv\` using \`dotenv\`. Define adjustable parameters (Stop Loss %, Take Profit %, Max Drawdown).
+    2.  **Notifier Class**: A unified class that logs to Console (logging library) AND sends Telegram messages (using \`requests\` to call Telegram API) if enabled.
+    3.  **LLM Decision Engine Class**: A class structure to interact with Google Gemini API.
+        -   Include a method \`analyze_market(symbol, data)\`.
+        -   Include a \`_mock_response()\` fallback method so the script runs even without an API key (returning random Bullish/Bearish signals for testing).
+    4.  **Risk Manager Class**:
+        -   Implement \`check_emergency_halt(current_equity)\` to stop trading if drawdown > 10%.
+        -   Implement \`calculate_position_size\` based on risk percentage.
+    5.  **Strategy Class (Backtrader)**:
+        -   Implement \`next()\` logic.
+        -   Integrate the **Grid Trading** logic (buy low, sell high within bands).
+        -   Integrate **Trailing Stop-Loss**.
+        -   Integrate **Auto-Compounding** (reinvest profits).
+        -   Call the AI Engine for entry confirmation.
+    6.  **Main Execution**:
+        -   Graceful Shutdown (catch \`SIGINT\`).
+        -   Setup Backtrader Cerebro.
+        -   Generate mock data for the backtest so the user can run the script immediately.
 
-    STRICT LOCALIZATION REQUIREMENTS (繁體中文):
-    1.  **Runtime Output**: 
-        -   EVERY \`print()\`, \`logging.info()\`, \`logging.error()\`, and \`Exception\` message must be in Traditional Chinese.
-        -   Example: \`logging.info("成功連線至幣安交易所 (Binance)")\`
-        -   Example: \`raise ValueError("錯誤: 無法讀取 .env 設定檔")\`
-        -   DO NOT print English sentences like "Order placed". Use "訂單已發送".
-
-    2.  **Documentation**:
-        -   Class and function docstrings (""") must be in Traditional Chinese.
-        -   Inline comments (#) must be in Traditional Chinese.
-
-    3.  **Code Standards**:
-        -   Keep class names (BinanceTrader), function names (fetch_balance), and variables (price, symbol) in **English**.
-        -   Use 'ccxt' or 'python-binance'.
-        -   Include secure API key handling via 'os.getenv' and 'dotenv'.
+    STRICT LOCALIZATION:
+    -   ALL comments, log messages, and print outputs MUST be in Traditional Chinese (繁體中文).
+    -   Example Log: "logging.info('✅ 訂單已成交: 買入 BTC/USDT')"
 
     Output Format:
-    -   Return structured XML-like markers.
-    -   ---PYTHON_START--- (The Python Code) ---PYTHON_END---
-    -   ---SUMMARY_START--- (A brief 繁體中文階段報告 phase report) ---SUMMARY_END---
-
-    Start generating now.
+    -   Wrap code in ---PYTHON_START--- and ---PYTHON_END--- markers.
+    -   Provide a short Traditional Chinese summary wrapped in ---SUMMARY_START--- and ---SUMMARY_END---.
   `;
 
   try {
@@ -52,13 +56,12 @@ export const generateBotStructure = async (config: BotConfig): Promise<Generated
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.2, 
+        temperature: 0.25, 
       }
     });
 
     const text = response.text || "";
     
-    // Parse the custom markers
     const codeMatch = text.match(/---PYTHON_START---([\s\S]*?)---PYTHON_END---/);
     const summaryMatch = text.match(/---SUMMARY_START---([\s\S]*?)---SUMMARY_END---/);
 
