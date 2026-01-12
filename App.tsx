@@ -151,7 +151,7 @@ const App: React.FC = () => {
             </div>
             
             {/* Visual Flair: Simulated Chart */}
-            <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-4 hidden lg:block shadow-lg">
+            <div className="h-[400px] bg-slate-900 border border-slate-800 rounded-xl p-4 hidden lg:block shadow-lg">
                <SimulatedChart />
             </div>
           </div>

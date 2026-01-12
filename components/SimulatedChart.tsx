@@ -28,7 +28,7 @@ const SimulatedChart: React.FC = () => {
           <h3 className="text-sm font-semibold text-slate-300">市場模擬回測 (BTC/USDT)</h3>
           <span className="text-xs px-2 py-1 rounded bg-green-500/10 text-green-400 border border-green-500/20">+2.4% (24H)</span>
        </div>
-      <div className="flex-1 min-h-[200px]">
+      <div className="flex-1 min-h-[300px] w-full relative">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data}>
             <defs>
