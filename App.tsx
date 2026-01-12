@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Play, Square, Activity, ShieldAlert, Cpu, Settings, Wallet } from 'lucide-react';
+import { Terminal, Play, Square, Activity, ShieldAlert, Cpu, Settings, Wallet, Download } from 'lucide-react';
 import Header from './components/Header';
 import RealtimeChart from './components/RealtimeChart';
 import { BotConfig, StrategyType, Ticker, LogEntry, Position, Order, AccountState } from './types';
 import * as Exchange from './services/exchangeService';
 import * as AI from './services/geminiService';
+import { pythonBotCode } from './utils/botTemplate';
 
 const App: React.FC = () => {
   // --- App State ---
@@ -46,6 +47,19 @@ const App: React.FC = () => {
       type,
       message
     }, ...prev.slice(0, 49)]); // Keep last 50 logs
+  };
+
+  const handleDownloadCode = () => {
+    const blob = new Blob([pythonBotCode], { type: 'text/x-python;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ai_crypto_bot.py';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    addLog('INFO', '已下載 Python 機器人完整原始碼 (ai_crypto_bot.py)');
   };
 
   // --- Bot Loop (The Backend Logic) ---
@@ -325,6 +339,12 @@ const App: React.FC = () => {
                      手動賣出
                   </button>
                 </div>
+                <button 
+                  onClick={handleDownloadCode}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-2 rounded text-sm transition-colors flex items-center justify-center gap-2"
+                >
+                  <Download className="w-4 h-4" /> 下載 Python 原始碼
+                </button>
               </div>
 
               <button
