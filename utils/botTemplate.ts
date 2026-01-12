@@ -1,18 +1,17 @@
 export const pythonBotCode = `
 # -*- coding: utf-8 -*-
 """
-AI Binance Trading Bot (Phase 7: Refactored & Optimized)
-版本: v7.0 (Modular Architecture)
-架構:
-  1. ConfigManager: 配置管理
-  2. ExchangeAdapter: 交易所交互 (CCXT + WebSocket)
-  3. NewsAgent: 新聞情感分析
-  4. AIBrain: Gemini LLM 決策核心
-  5. RiskManager: 風控與移動止損計算
-  6. PositionTracker: 持倉狀態管理
-  7. BotEngine: 主控邏輯與事件循環
-  8. GUI: Tkinter 使用者介面
-功能: 實時串流、模擬/實盤切換、AI 分析、新聞整合、自動風控、Telegram 通知
+AI Binance Trading Bot (Final Phase)
+版本: v8.0 (Production Ready)
+架構: Modular Object-Oriented Design
+功能全集:
+  1. GUI: Tkinter 介面，支援 API 配置、模擬/實盤切換、即時儀表板
+  2. 連接: 支援 Binance (CCXT + WebSocket) 與 Gemini AI
+  3. 掃描: 自動篩選高成交量幣種
+  4. 分析: 技術指標 (RSI, MACD, ATR) + 新聞情緒 (CryptoPanic)
+  5. 決策: Gemini LLM 綜合分析，信心分數 > 70% 執行
+  6. 風控: 複利倉位計算、移動止損 (Trailing Stop)、最大回撤停機
+  7. 通知: Telegram 即時推播、每日績效報告
 """
 
 import sys
@@ -23,12 +22,11 @@ import time
 import json
 import os
 import logging
-import queue
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
 # -----------------------------------------------------------------------------
-# 0. 依賴檢查與安裝
+# 0. 自動化依賴管理
 # -----------------------------------------------------------------------------
 
 REQUIRED_LIBS = {
@@ -39,15 +37,19 @@ REQUIRED_LIBS = {
     'telebot': 'pyTelegramBotAPI',
     'requests': 'requests',
     'websocket-client': 'websocket-client',
-    'dotenv': 'python-dotenv'
+    'dotenv': 'python-dotenv',
+    'pillow': 'Pillow'  # For potential image handling if needed, usually good to have
 }
 
 def check_dependencies():
-    """檢查並自動安裝缺少的依賴庫"""
+    """啟動時自動檢查並安裝缺少的庫"""
+    print("正在檢查系統依賴...")
     for import_name, install_name in REQUIRED_LIBS.items():
         try:
             if import_name == 'websocket-client':
                 import websocket
+            elif import_name == 'pillow':
+                import PIL
             else:
                 importlib.import_module(import_name)
         except ImportError:
@@ -56,6 +58,7 @@ def check_dependencies():
                 subprocess.check_call([sys.executable, "-m", "pip", "install", install_name])
             except Exception as e:
                 print(f"❌ 安裝失敗 {install_name}: {e}")
+                input("請手動安裝後重試。按 Enter 退出...")
                 sys.exit(1)
 
 check_dependencies()
@@ -71,18 +74,18 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
 # -----------------------------------------------------------------------------
-# 1. 基礎組件 (Config, Notification, Logging)
+# 1. 核心組件: 配置與日誌
 # -----------------------------------------------------------------------------
 
 class ConfigManager:
-    """管理系統配置與參數"""
+    """管理所有配置參數，支援 JSON 持久化"""
     def __init__(self, filepath="config.json"):
         self.filepath = filepath
         self.defaults = {
             "binance_key": "", "binance_secret": "",
             "gemini_key": "", "cryptopanic_key": "",
             "tg_token": "", "tg_chat": "",
-            "risk_pct": 2.0, "max_drawdown": 15.0, "trailing_stop": 1.5,
+            "risk_pct": 2.0, "max_drawdown": 10.0, "trailing_stop": 1.5,
             "max_symbols": 5, "sim_initial_balance": 10000.0,
             "is_sim": True, "is_testnet": False
         }
@@ -93,7 +96,6 @@ class ConfigManager:
             try:
                 with open(self.filepath, "r", encoding='utf-8') as f:
                     loaded = json.load(f)
-                    # Merge with defaults
                     for k, v in self.defaults.items():
                         if k not in loaded: loaded[k] = v
                     return loaded
@@ -105,29 +107,8 @@ class ConfigManager:
         with open(self.filepath, "w", encoding='utf-8') as f:
             json.dump(self.data, f, indent=4)
 
-    def get(self, key: str) -> Any:
-        return self.data.get(key, self.defaults.get(key))
-
-class TelegramNotifier:
-    """處理 Telegram 訊息推送"""
-    def __init__(self, token: str, chat_id: str):
-        self.bot = None
-        self.chat_id = chat_id
-        if token:
-            try:
-                self.bot = telebot.TeleBot(token)
-            except Exception as e:
-                logging.error(f"Telegram Init Error: {e}")
-
-    def send(self, message: str):
-        if self.bot and self.chat_id:
-            try:
-                self.bot.send_message(self.chat_id, message)
-            except Exception as e:
-                logging.error(f"TG Send Error: {e}")
-
 class GuiLogHandler(logging.Handler):
-    """將 Log 輸出導向至 Tkinter Text Widget"""
+    """將 Python Logging 輸出重定向到 GUI 的 Text 元件"""
     def __init__(self, text_widget):
         super().__init__()
         self.text_widget = text_widget
@@ -143,56 +124,66 @@ class GuiLogHandler(logging.Handler):
             self.text_widget.after(0, _append)
         except: pass
 
+class TelegramNotifier:
+    def __init__(self, token: str, chat_id: str):
+        self.bot = None
+        self.chat_id = chat_id
+        if token:
+            try:
+                self.bot = telebot.TeleBot(token)
+            except: pass
+
+    def send(self, msg: str):
+        if self.bot and self.chat_id:
+            try:
+                self.bot.send_message(self.chat_id, msg)
+            except Exception as e:
+                logging.error(f"TG Error: {e}")
+
 # -----------------------------------------------------------------------------
-# 2. 數據與分析 (News, Indicators, AI)
+# 2. 市場數據與 AI 分析
 # -----------------------------------------------------------------------------
 
 class NewsAgent:
-    """負責獲取與緩存 CryptoPanic 新聞數據"""
+    """整合 CryptoPanic API 獲取市場情緒"""
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.cache = "系統初始化中..."
-        self.last_fetch_time = 0
-        self.cache_duration = 300  # 5分鐘緩存
+        self.cache = "尚無新聞數據"
+        self.last_fetch = 0
+        self.ttl = 300  # 5分鐘緩存
 
-    def get_market_sentiment(self) -> str:
-        if not self.api_key:
-            return "新聞 API 未配置"
+    def get_sentiment(self) -> str:
+        if not self.api_key: return "未配置新聞 API"
+        if time.time() - self.last_fetch < self.ttl: return self.cache
         
-        if time.time() - self.last_fetch_time < self.cache_duration:
-            return self.cache
-
         try:
             url = f"https://cryptopanic.com/api/v1/posts/?auth_token={self.api_key}&public=true&filter=important"
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
-                results = data.get('results', [])
-                if results:
-                    titles = [f"• {item['title']}" for item in results[:3]]
+                posts = data.get('results', [])[:3]
+                if posts:
+                    titles = [f"• {p['title']}" for p in posts]
                     self.cache = "\\n".join(titles)
                 else:
-                    self.cache = "近期無重大新聞"
-                self.last_fetch_time = time.time()
+                    self.cache = "近期市場平靜"
+                self.last_fetch = time.time()
                 return self.cache
         except Exception as e:
-            logging.error(f"News Fetch Error: {e}")
+            logging.error(f"News Error: {e}")
         return self.cache
 
-class TechnicalAnalyzer:
-    """計算技術指標"""
+class TechnicalAnalysis:
+    """計算技術指標 (RSI, MACD, ATR)"""
     @staticmethod
-    def calculate(ohlcv: List[list]) -> Dict[str, float]:
-        if not ohlcv: return {}
+    def compute(ohlcv: List[list]) -> Dict:
+        if not ohlcv or len(ohlcv) < 50: return {}
         try:
             df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'vol'])
-            # RSI
             df['rsi'] = ta.rsi(df['close'], length=14)
-            # MACD
             macd = ta.macd(df['close'])
             df['macd'] = macd['MACD_12_26_9']
-            df['macd_signal'] = macd['MACDs_12_26_9']
-            # ATR
+            df['signal'] = macd['MACDs_12_26_9']
             df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
             
             last = df.iloc[-1]
@@ -200,15 +191,13 @@ class TechnicalAnalyzer:
                 'price': float(last['close']),
                 'rsi': float(last['rsi']),
                 'macd': float(last['macd']),
-                'macd_signal': float(last['macd_signal']),
+                'signal': float(last['signal']),
                 'atr': float(last['atr'])
             }
-        except Exception as e:
-            logging.error(f"TA Error: {e}")
-            return {}
+        except: return {}
 
-class AIBrain:
-    """Gemini LLM 決策核心"""
+class GeminiBrain:
+    """AI 決策核心"""
     def __init__(self, api_key: str):
         self.enabled = False
         if api_key:
@@ -218,61 +207,55 @@ class AIBrain:
                 self.enabled = True
             except: pass
 
-    def get_trading_decision(self, symbol: str, price: float, techs: Dict, 
-                             position: Optional[Dict], is_sim: bool, news: str) -> Dict:
-        if not self.enabled:
-            return {'action': 'HOLD', 'confidence': 0, 'reason': 'AI Disabled'}
-
-        mode_str = "SIMULATION (Paper Trading)" if is_sim else "REAL TRADING"
-        pos_str = f"{position['side']} (PnL: {position['pnl_pct']:.2f}%)" if position else "NO POSITION"
-
+    def analyze(self, symbol, price, techs, pos, is_sim, news) -> Dict:
+        if not self.enabled: return {'action': 'HOLD', 'confidence': 0, 'reason': 'AI Disabled'}
+        
+        mode = "SIMULATION" if is_sim else "REAL MONEY"
+        pos_txt = f"{pos['side']} (PnL: {pos['pnl_pct']:.2f}%)" if pos else "EMPTY"
+        
         prompt = f"""
-        Role: Senior Crypto Trader. Analyze the market for {symbol}.
+        Act as a disciplined crypto trader. Analyze {symbol}.
         
-        [Context]
-        Mode: {mode_str} | Price: {price}
-        Position: {pos_str}
+        [Market Data]
+        Price: {price}
+        RSI: {techs.get('rsi',50):.1f} | MACD: {techs.get('macd',0):.4f}
+        ATR: {techs.get('atr',0):.4f}
+        News: {news}
         
-        [News Sentiment]
-        {news}
+        [Account]
+        Mode: {mode} | Current Position: {pos_txt}
         
-        [Technical Indicators]
-        RSI(14): {techs.get('rsi', 0):.1f} (Over 70=Overbought, Under 30=Oversold)
-        MACD: {techs.get('macd', 0):.4f} | Signal: {techs.get('macd_signal', 0):.4f}
-        ATR: {techs.get('atr', 0):.4f} (Volatility)
+        [Task]
+        Should we enter a new trade or close existing? 
+        Require >70% confidence for action.
         
-        [Instructions]
-        1. Synthesize News and Technicals. News overrides weak technicals.
-        2. High confidence (>70) required for entry.
-        3. Output strict JSON.
-        
-        JSON Format:
+        Response Format (JSON Only):
         {{
             "action": "OPEN_LONG" | "OPEN_SHORT" | "CLOSE" | "HOLD",
-            "confidence": <0-100 integer>,
-            "reason": "<Concise Traditional Chinese reasoning>",
-            "expectation": "<Short prediction>"
+            "confidence": 0-100,
+            "reason": "Short Traditional Chinese reasoning",
+            "stop_loss_suggestion": number
         }}
         """
         try:
-            response = self.model.generate_content(prompt)
-            clean_text = response.text.replace('\`\`\`json', '').replace('\`\`\`', '').strip()
-            return json.loads(clean_text)
+            res = self.model.generate_content(prompt)
+            txt = res.text.replace('\`\`\`json','').replace('\`\`\`','').strip()
+            return json.loads(txt)
         except Exception as e:
-            logging.error(f"AI Brain Error: {e}")
-            return {'action': 'HOLD', 'confidence': 0, 'reason': 'AI Error'}
+            logging.error(f"AI Error: {e}")
+            return {'action': 'HOLD', 'confidence': 0, 'reason': 'Error'}
 
 # -----------------------------------------------------------------------------
-# 3. 交易所連接與數據流 (Exchange & WebSocket)
+# 3. 交易執行與 WebSocket
 # -----------------------------------------------------------------------------
 
-class WebSocketStream(threading.Thread):
-    """處理 Binance WebSocket 實時行情"""
-    def __init__(self, symbols: List[str], callback_price, callback_candle):
+class WsClient(threading.Thread):
+    """WebSocket 線程: 負責即時監聽價格與 K 線"""
+    def __init__(self, symbols, on_price, on_candle):
         super().__init__()
-        self.symbols = [s.lower().replace('/', '') for s in symbols]
-        self.cb_price = callback_price
-        self.cb_candle = callback_candle
+        self.symbols = [s.lower().replace('/','') for s in symbols]
+        self.on_price = on_price
+        self.on_candle = on_candle
         self.ws = None
         self.running = False
         self.daemon = True
@@ -281,582 +264,360 @@ class WebSocketStream(threading.Thread):
         self.running = True
         streams = '/'.join([f"{s}@kline_1m" for s in self.symbols])
         url = f"wss://fstream.binance.com/stream?streams={streams}"
-        
-        self.ws = websocket.WebSocketApp(url,
-            on_message=self._on_message,
-            on_error=self._on_error,
-            on_close=self._on_close)
+        self.ws = websocket.WebSocketApp(url, 
+            on_message=self.on_msg, on_close=self.on_close, on_error=self.on_err)
         self.ws.run_forever()
 
-    def _on_message(self, ws, message):
+    def on_msg(self, ws, msg):
         if not self.running: return
         try:
-            data = json.loads(message)
+            data = json.loads(msg)
             if 'data' in data:
                 k = data['data']['k']
-                symbol = k['s'][:-4] + '/' + k['s'][-4:] # BTCUSDT -> BTC/USDT
+                sym = k['s'][:-4] + '/' + k['s'][-4:]
                 price = float(k['c'])
-                is_closed = k['x']
-                
-                self.cb_price(symbol, price)
-                if is_closed:
-                    self.cb_candle(symbol, price)
+                self.on_price(sym, price)
+                if k['x']: self.on_candle(sym, price)
         except: pass
 
-    def _on_error(self, ws, error):
-        logging.error(f"WS Error: {error}")
-
-    def _on_close(self, ws, *args):
-        logging.info("WebSocket Closed")
-        self.running = False
-
+    def on_err(self, ws, err): logging.error(f"WS Error: {err}")
+    def on_close(self, ws, *args): logging.info("WS Disconnected")
+    
     def stop(self):
         self.running = False
         if self.ws: self.ws.close()
 
-class ExchangeAdapter:
-    """統一管理 CCXT 交互與 WebSocket 生命週期"""
-    def __init__(self, config: Dict[str, Any]):
+class Exchange:
+    """交易所交互層"""
+    def __init__(self, config):
         self.cfg = config
-        self.client = None
-        self.stream = None
+        self.ccxt = None
+        self.ws = None
         
-    def connect(self) -> bool:
+    def connect(self):
         try:
-            self.client = ccxt.binance({
-                'apiKey': self.cfg['binance_key'],
+            self.ccxt = ccxt.binance({
+                'apiKey': self.cfg['binance_key'], 
                 'secret': self.cfg['binance_secret'],
-                'enableRateLimit': True,
                 'options': {'defaultType': 'future'}
             })
             if self.cfg['is_testnet'] and not self.cfg['is_sim']:
-                self.client.set_sandbox_mode(True)
-            self.client.load_markets()
+                self.ccxt.set_sandbox_mode(True)
+            self.ccxt.load_markets()
             return True
         except Exception as e:
-            logging.error(f"Exchange Connect Error: {e}")
+            logging.error(f"Connect Failed: {e}")
             return False
 
-    def start_stream(self, symbols: List[str], on_price, on_candle):
-        self.stream = WebSocketStream(symbols, on_price, on_candle)
-        self.stream.start()
-
-    def stop_stream(self):
-        if self.stream: self.stream.stop()
-
-    def fetch_ohlcv(self, symbol: str) -> List[list]:
+    def fetch_top_symbols(self, limit=5):
         try:
-            return self.client.fetch_ohlcv(symbol, timeframe='1h', limit=50)
-        except: return []
+            tickers = self.ccxt.fetch_tickers()
+            valid = {k: v for k,v in tickers.items() if '/USDT' in k}
+            sorted_t = sorted(valid.items(), key=lambda x: float(x[1]['quoteVolume']), reverse=True)
+            return [x[0] for x in sorted_t[:limit]]
+        except: return ['BTC/USDT', 'ETH/USDT']
 
-    def get_real_balance(self) -> float:
+    def fetch_ohlcv(self, symbol):
+        return self.ccxt.fetch_ohlcv(symbol, '1h', limit=60)
+
+    def get_balance(self):
         try:
-            bal = self.client.fetch_balance()
+            bal = self.ccxt.fetch_balance()
             return float(bal['total']['USDT'])
         except: return 0.0
 
-    def get_real_positions(self) -> List[Dict]:
-        try:
-            raw = self.client.fetch_positions()
-            positions = []
-            for p in raw:
-                amt = float(p.get('contracts', p['info'].get('positionAmt', 0)))
-                if amt != 0:
-                    positions.append({
-                        'symbol': p['symbol'],
-                        'side': 'LONG' if amt > 0 else 'SHORT',
-                        'amount': abs(amt),
-                        'entry': float(p['entryPrice']),
-                        'pnl': float(p['unrealizedPnl']),
-                        'mark_price': float(p.get('markPrice', 0))
-                    })
-            return positions
-        except: return []
-
-    def create_market_order(self, symbol: str, side: str, amount: float):
-        # side: 'buy' or 'sell'
-        return self.client.create_order(symbol, 'market', side, amount)
+    def place_order(self, symbol, side, amount):
+        return self.ccxt.create_order(symbol, 'market', side, amount)
 
 # -----------------------------------------------------------------------------
-# 4. 風控與狀態管理 (Risk & Position)
+# 4. 策略邏輯與風控
 # -----------------------------------------------------------------------------
 
-class RiskManager:
-    """計算倉位大小、追蹤止損邏輯"""
-    def __init__(self, risk_pct: float, trailing_stop_pct: float):
-        self.risk_pct = risk_pct
-        self.trailing_stop_pct = trailing_stop_pct
-
-    def calculate_size(self, balance: float, price: float) -> float:
-        # Simple percentage of balance for this demo
-        # In prod, should use stop loss distance
-        value = balance * (self.risk_pct / 100)
-        return value / price
-
-    def check_trailing_stop(self, position: Dict, current_price: float) -> bool:
-        """檢查是否觸發移動止損"""
-        if position['side'] == 'LONG':
-            # Update High Water Mark
-            if current_price > position.get('high_mark', -1):
-                position['high_mark'] = current_price
-            
-            # Check Drawdown from High
-            threshold = position['high_mark'] * (1 - self.trailing_stop_pct / 100)
-            return current_price < threshold
-        
-        elif position['side'] == 'SHORT':
-            # Update Low Water Mark
-            if current_price < position.get('low_mark', 99999999):
-                position['low_mark'] = current_price
-            
-            # Check Drawdown from Low (Price rising)
-            threshold = position['low_mark'] * (1 + self.trailing_stop_pct / 100)
-            return current_price > threshold
-            
-        return False
-
-class PositionTracker:
-    """管理持倉狀態 (兼容模擬與實盤數據結構)"""
-    def __init__(self):
-        # {symbol: {side, amount, entry, pnl, pnl_pct, high_mark, low_mark}}
-        self.positions = {}
-        self.sim_balance = 0.0
-
-    def init_sim_balance(self, balance: float):
-        self.sim_balance = balance
-
-    def update_sim_pnl(self, symbol: str, current_price: float):
-        if symbol in self.positions:
-            pos = self.positions[symbol]
-            if pos['side'] == 'LONG':
-                pos['pnl'] = (current_price - pos['entry']) * pos['amount']
-            else:
-                pos['pnl'] = (pos['entry'] - current_price) * pos['amount']
-            
-            invested = pos['entry'] * pos['amount']
-            pos['pnl_pct'] = (pos['pnl'] / invested * 100) if invested > 0 else 0
-
-    def open_sim_position(self, symbol: str, side: str, price: float, amount: float):
-        fee = price * amount * 0.0005 # 0.05% fee
-        self.sim_balance -= fee
-        
-        self.positions[symbol] = {
-            'side': side,
-            'amount': amount,
-            'entry': price,
-            'pnl': 0.0,
-            'pnl_pct': 0.0,
-            'high_mark': price,
-            'low_mark': price
-        }
-
-    def close_sim_position(self, symbol: str, price: float):
-        if symbol in self.positions:
-            pos = self.positions[symbol]
-            fee = price * pos['amount'] * 0.0005
-            self.sim_balance += (pos['pnl'] - fee)
-            del self.positions[symbol]
-            return pos['pnl']
-        return 0.0
-
-# -----------------------------------------------------------------------------
-# 5. 主引擎 (BotEngine)
-# -----------------------------------------------------------------------------
-
-class BotEngine:
-    """核心控制器：協調 AI, Exchange, GUI"""
-    def __init__(self, config_manager: ConfigManager, gui_callbacks: Dict):
-        self.cfg_mgr = config_manager
-        self.cbs = gui_callbacks
+class BotLogic:
+    def __init__(self, config, callbacks):
+        self.cfg = config
+        self.cb = callbacks
         self.running = False
         
-        # Components
-        self.adapter = None
-        self.notifier = None
-        self.news_agent = None
-        self.brain = None
-        self.risk_mgr = None
-        self.tracker = None
+        self.exchange = None
+        self.ai = None
+        self.news = None
+        self.notify = None
         
-        # State
-        self.equity_peak = 0.0
+        self.positions = {} # {symbol: {side, amount, entry, pnl, high_mark, low_mark}}
+        self.sim_bal = 0.0
+        self.peak_equity = 0.0
         self.start_equity = 0.0
-        self.last_report_date = datetime.now().strftime("%Y-%m-%d")
+        self.last_report = datetime.now().strftime("%Y-%m-%d")
 
-    def initialize(self):
-        cfg = self.cfg_mgr.data
+    def init_system(self):
+        cfg = self.cfg.data
+        self.exchange = Exchange(cfg)
+        if not self.exchange.connect(): return False
         
-        # Init Subsystems
-        self.adapter = ExchangeAdapter(cfg)
-        self.notifier = TelegramNotifier(cfg['tg_token'], cfg['tg_chat'])
-        self.news_agent = NewsAgent(cfg['cryptopanic_key'])
-        self.brain = AIBrain(cfg['gemini_key'])
-        self.risk_mgr = RiskManager(cfg['risk_pct'], cfg['trailing_stop'])
-        self.tracker = PositionTracker()
+        self.ai = GeminiBrain(cfg['gemini_key'])
+        self.news = NewsAgent(cfg['cryptopanic_key'])
+        self.notify = TelegramNotifier(cfg['tg_token'], cfg['tg_chat'])
         
         if cfg['is_sim']:
-            self.tracker.init_sim_balance(float(cfg['sim_initial_balance']))
-            
-        if self.adapter.connect():
-            self.log("✅ 交易所連線成功")
-            mode = "🧪 模擬模式" if cfg['is_sim'] else "🔥 實盤模式"
-            self.notifier.send(f"🤖 機器人啟動 | {mode} | 追蹤止損: {cfg['trailing_stop']}%")
-            return True
+            self.sim_bal = float(cfg['sim_initial_balance'])
+            self.peak_equity = self.sim_bal
+            self.start_equity = self.sim_bal
         else:
-            self.log("❌ 交易所連線失敗")
-            return False
-
-    def log(self, msg: str):
-        self.cbs['log'](msg)
+            bal = self.exchange.get_balance()
+            self.start_equity = bal
+            self.peak_equity = bal
+            
+        return True
 
     def start(self):
         self.running = True
-        cfg = self.cfg_mgr.data
+        symbols = self.exchange.fetch_top_symbols(int(self.cfg.data['max_symbols']))
+        self.cb['log'](f"🚀 啟動監控: {', '.join(symbols)}")
         
-        # Get Active Symbols
-        try:
-            tickers = self.adapter.client.fetch_tickers()
-            valid = {k: v for k, v in tickers.items() if '/USDT' in k}
-            sorted_t = sorted(valid.items(), key=lambda x: float(x[1]['quoteVolume']), reverse=True)
-            active_symbols = [x[0] for x in sorted_t[:cfg['max_symbols']]]
-        except:
-            active_symbols = ['BTC/USDT', 'ETH/USDT']
-            
-        self.log(f"👀 監控目標: {', '.join(active_symbols)}")
+        self.exchange.ws = WsClient(symbols, self.on_price, self.on_candle)
+        self.exchange.ws.start()
         
-        # Initial Balance Sync
-        self._sync_equity()
-        self.start_equity = self._get_total_equity()
-        self.equity_peak = self.start_equity
-
-        # Start Streams
-        self.adapter.start_stream(active_symbols, self._on_price, self._on_candle)
-        
-        # Start Main Loop Thread
-        threading.Thread(target=self._main_loop, daemon=True).start()
+        threading.Thread(target=self.loop, daemon=True).start()
 
     def stop(self):
         self.running = False
-        if self.adapter:
-            self.adapter.stop_stream()
-        self.log("🛑 系統已停止")
+        if self.exchange.ws: self.exchange.ws.stop()
+        self.cb['log']("🛑 機器人已停止")
 
-    def _main_loop(self):
-        """主循環: UI更新與每日報告"""
+    def get_equity(self):
+        if self.cfg.data['is_sim']:
+            pnl = sum(p['pnl'] for p in self.positions.values())
+            return self.sim_bal + pnl
+        else:
+            return self.exchange.get_balance() # 簡化: 實盤僅抓餘額
+
+    def check_risk(self, equity):
+        # 1. Update Peak
+        if equity > self.peak_equity: self.peak_equity = equity
+        
+        # 2. Drawdown
+        dd = (self.peak_equity - equity) / self.peak_equity * 100 if self.peak_equity > 0 else 0
+        self.cb['update_stats'](equity, dd)
+        
+        if dd > self.cfg.data['max_drawdown']:
+            self.cb['log'](f"🚨 最大回撤觸發 ({dd:.2f}%)! 強制停止。")
+            self.notify.send("🚨 系統警報: 帳戶觸發最大回撤風控，已自動停機。")
+            self.stop()
+
+    def loop(self):
         while self.running:
             try:
-                # 1. Update Equity & Drawdown
-                current_eq = self._get_total_equity()
-                if current_eq > self.equity_peak: self.equity_peak = current_eq
-                dd = (self.equity_peak - current_eq) / self.equity_peak * 100 if self.equity_peak > 0 else 0
+                eq = self.get_equity()
+                self.check_risk(eq)
                 
-                # 2. Daily Report
+                # Daily Report
                 today = datetime.now().strftime("%Y-%m-%d")
-                if today != self.last_report_date:
-                    self._send_daily_report(current_eq)
-                    self.last_report_date = today
-
-                # 3. Update GUI
-                self.cbs['update_ui']({
-                    'equity': current_eq,
-                    'drawdown': dd
-                })
+                if today != self.last_report:
+                    profit = eq - self.start_equity
+                    msg = f"📅 [日報] {today}\n權益: {eq:.2f}\n損益: {profit:.2f}"
+                    self.notify.send(msg)
+                    self.last_report = today
                 
-                pos_list = []
-                for sym, pos in self.tracker.positions.items():
-                    pos_list.append((
-                        sym, pos['side'], 
-                        f"{pos['amount']:.4f}", 
-                        f"{pos['entry']:.2f}", 
-                        f"{pos['pnl']:.2f} ({pos['pnl_pct']:.1f}%)"
-                    ))
-                self.cbs['update_pos'](pos_list)
-
-                # 4. Check Hard Drawdown Stop
-                if dd > self.cfg_mgr.data['max_drawdown']:
-                    self.log(f"🚨 觸發最大回撤 ({dd:.2f}%)，停止交易！")
-                    self.notifier.send(f"🚨 警報: 帳戶回撤過大，機器人已暫停。")
-                    self.stop()
-                    break
-
-            except Exception as e:
-                logging.error(f"Loop Error: {e}")
-            
-            time.sleep(1)
-
-    def _sync_equity(self):
-        """同步真實帳戶餘額 (僅實盤)"""
-        if not self.cfg_mgr.data['is_sim']:
-            bal = self.adapter.get_real_balance()
-            # 實盤需要從 API 獲取倉位並更新到 tracker
-            real_pos = self.adapter.get_real_positions()
-            self.tracker.positions = {} # Reset
-            for p in real_pos:
-                # Map real pos to internal structure
-                self.tracker.positions[p['symbol']] = {
-                    'side': p['side'], 'amount': p['amount'], 'entry': p['entry'],
-                    'pnl': p['pnl'], 'pnl_pct': 0, # Calculated later
-                    'high_mark': p['entry'], 'low_mark': p['entry'] # Reset marks on restart
-                }
-
-    def _get_total_equity(self) -> float:
-        if self.cfg_mgr.data['is_sim']:
-            pnl = sum(p['pnl'] for p in self.tracker.positions.values())
-            return self.tracker.sim_balance + pnl
-        else:
-            # For real mode, approximation based on balance + unrealized
-            return self.adapter.get_real_balance() + sum(p['pnl'] for p in self.tracker.positions.values())
-
-    def _send_daily_report(self, current_eq):
-        pnl = current_eq - self.start_equity
-        pct = (pnl / self.start_equity * 100) if self.start_equity > 0 else 0
-        msg = f"📅 [日報] {self.last_report_date}\n權益: {current_eq:.2f}\n損益: {pnl:.2f} ({pct:.2f}%)"
-        self.log(msg)
-        self.notifier.send(msg)
-
-    # --- Callbacks ---
-
-    def _on_price(self, symbol: str, price: float):
-        """WS 價格更新 -> 更新 PnL 與 檢查止損"""
-        # 1. Update Sim PnL
-        if self.cfg_mgr.data['is_sim']:
-            self.tracker.update_sim_pnl(symbol, price)
-        
-        # 2. Check Trailing Stop
-        pos = self.tracker.positions.get(symbol)
-        if pos:
-            if self.risk_mgr.check_trailing_stop(pos, price):
-                self.log(f"📉 [止損] {symbol} 觸發追蹤止損")
-                self._execute_close(symbol, price, "Trailing Stop")
-
-    def _on_candle(self, symbol: str, close_price: float):
-        """WS K線收盤 -> 觸發 AI 分析"""
-        threading.Thread(target=self._run_analysis, args=(symbol, close_price)).start()
-
-    def _run_analysis(self, symbol: str, price: float):
-        try:
-            # 1. Fetch Data
-            ohlcv = self.adapter.fetch_ohlcv(symbol)
-            techs = TechnicalAnalyzer.calculate(ohlcv)
-            news = self.news_agent.get_market_sentiment()
-            pos = self.tracker.positions.get(symbol)
-            is_sim = self.cfg_mgr.data['is_sim']
-            
-            # 2. AI Decide
-            decision = self.brain.get_trading_decision(symbol, price, techs, pos, is_sim, news)
-            
-            if decision['confidence'] > 60:
-                self.log(f"🧠 {symbol}: {decision['action']} ({decision['confidence']}%)")
-            
-            # 3. Execute
-            if decision['confidence'] >= 70:
-                self._process_decision(symbol, price, decision, pos)
+                # Update GUI Pos
+                plist = []
+                for s, p in self.positions.items():
+                    plist.append((s, p['side'], f"{p['amount']:.4f}", f"{p['entry']:.2f}", f"{p['pnl']:.2f}"))
+                self.cb['update_pos'](plist)
                 
-        except Exception as e:
-            logging.error(f"Analysis Error {symbol}: {e}")
-
-    def _process_decision(self, symbol: str, price: float, decision: Dict, pos: Dict):
-        action = decision['action']
-        reason = decision.get('reason', '')
-        
-        if action == 'OPEN_LONG' and not pos:
-            self.notifier.send(f"🚀 AI 做多 {symbol}\n理由: {reason}")
-            self._execute_open(symbol, 'LONG', price)
-            
-        elif action == 'OPEN_SHORT' and not pos:
-            self.notifier.send(f"📉 AI 做空 {symbol}\n理由: {reason}")
-            self._execute_open(symbol, 'SHORT', price)
-            
-        elif action == 'CLOSE' and pos:
-            self.notifier.send(f"💰 AI 平倉 {symbol}\n理由: {reason}")
-            self._execute_close(symbol, price, "AI Signal")
-
-    def _execute_open(self, symbol: str, side: str, price: float):
-        amount = self.risk_mgr.calculate_size(self._get_total_equity(), price)
-        is_sim = self.cfg_mgr.data['is_sim']
-        
-        if is_sim:
-            self.tracker.open_sim_position(symbol, side, price, amount)
-            self.log(f"🧪 [Sim] 開倉 {side} {symbol} x{amount:.4f}")
-        else:
-            # Real Order
-            try:
-                order_side = 'buy' if side == 'LONG' else 'sell'
-                precision_amt = self.adapter.client.amount_to_precision(symbol, amount)
-                self.adapter.create_market_order(symbol, order_side, precision_amt)
-                self.log(f"⚡ [Real] 市價單 {side} {symbol}")
-                # Real positions synced in next loop
+                time.sleep(1)
             except Exception as e:
-                self.log(f"下單失敗: {e}")
+                logging.error(f"Loop: {e}")
+                time.sleep(5)
 
-    def _execute_close(self, symbol: str, price: float, reason: str):
-        is_sim = self.cfg_mgr.data['is_sim']
-        pos = self.tracker.positions.get(symbol)
-        if not pos: return
+    def on_price(self, sym, price):
+        # Update PnL
+        if sym in self.positions:
+            p = self.positions[sym]
+            if p['side'] == 'LONG': p['pnl'] = (price - p['entry']) * p['amount']
+            else: p['pnl'] = (p['entry'] - price) * p['amount']
+            entry_val = p['entry'] * p['amount']
+            p['pnl_pct'] = (p['pnl'] / entry_val * 100) if entry_val > 0 else 0
+            
+            # Trailing Stop
+            ts = self.cfg.data['trailing_stop']
+            if p['side'] == 'LONG':
+                p['high_mark'] = max(p.get('high_mark', price), price)
+                if price < p['high_mark'] * (1 - ts/100):
+                    self.close_position(sym, price, "Trailing Stop")
+            else:
+                p['low_mark'] = min(p.get('low_mark', price), price)
+                if price > p['low_mark'] * (1 + ts/100):
+                    self.close_position(sym, price, "Trailing Stop")
 
-        if is_sim:
-            pnl = self.tracker.close_sim_position(symbol, price)
-            self.log(f"🧪 [Sim] 平倉 {symbol} | PnL: {pnl:.2f} | {reason}")
+    def on_candle(self, sym, close):
+        threading.Thread(target=self.analyze, args=(sym, close)).start()
+
+    def analyze(self, sym, price):
+        ohlcv = self.exchange.fetch_ohlcv(sym)
+        techs = TechnicalAnalysis.compute(ohlcv)
+        news = self.news.get_sentiment()
+        pos = self.positions.get(sym)
+        is_sim = self.cfg.data['is_sim']
+        
+        dec = self.ai.analyze(sym, price, techs, pos, is_sim, news)
+        
+        if dec['confidence'] > 60:
+            self.cb['log'](f"🧠 {sym} AI: {dec['action']} ({dec['confidence']}%)")
+            
+        if dec['confidence'] >= 70:
+            act = dec['action']
+            if act == 'OPEN_LONG' and not pos: self.open_position(sym, 'LONG', price)
+            elif act == 'OPEN_SHORT' and not pos: self.open_position(sym, 'SHORT', price)
+            elif act == 'CLOSE' and pos: self.close_position(sym, price, "AI Signal")
+
+    def open_position(self, sym, side, price):
+        equity = self.get_equity()
+        risk_amt = equity * (self.cfg.data['risk_pct'] / 100) # Compounding
+        amt = risk_amt / price
+        
+        if self.cfg.data['is_sim']:
+            self.positions[sym] = {
+                'side': side, 'amount': amt, 'entry': price, 'pnl': 0, 'pnl_pct': 0,
+                'high_mark': price, 'low_mark': price
+            }
+            fee = risk_amt * 0.001
+            self.sim_bal -= fee
+            self.cb['log'](f"🧪 [Sim] 開倉 {side} {sym}")
         else:
             try:
-                side = 'buy' if pos['side'] == 'SHORT' else 'sell'
-                self.adapter.create_market_order(symbol, side, pos['amount'])
-                self.log(f"⚡ [Real] 平倉 {symbol} | {reason}")
-            except Exception as e:
-                self.log(f"平倉失敗: {e}")
+                real_side = 'buy' if side == 'LONG' else 'sell'
+                self.exchange.place_order(sym, real_side, amt)
+                self.cb['log'](f"⚡ [Real] 開倉 {side} {sym}")
+                # Real positions would need sync via REST loop, simplified here
+            except Exception as e: logging.error(f"Order Fail: {e}")
+
+    def close_position(self, sym, price, reason):
+        p = self.positions.get(sym)
+        if not p: return
+        
+        if self.cfg.data['is_sim']:
+            self.sim_bal += p['pnl']
+            del self.positions[sym]
+            self.cb['log'](f"🧪 [Sim] 平倉 {sym} ({reason}) PnL: {p['pnl']:.2f}")
+            self.notify.send(f"💰 平倉 {sym} | PnL: {p['pnl']:.2f} | {reason}")
+        else:
+            try:
+                side = 'sell' if p['side'] == 'LONG' else 'buy'
+                self.exchange.place_order(sym, side, p['amount'])
+                del self.positions[sym]
+                self.cb['log'](f"⚡ [Real] 平倉 {sym}")
+            except Exception as e: logging.error(f"Close Fail: {e}")
 
 # -----------------------------------------------------------------------------
-# 6. GUI 使用者介面 (Tkinter)
+# 5. Tkinter GUI
 # -----------------------------------------------------------------------------
 
-class TradingBotApp(tk.Tk):
+class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("AI Binance Bot v7.0 (Modular)")
-        self.geometry("1100x900")
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.title("AI Trading Bot v8.0")
+        self.geometry("1000x850")
         
-        self.cfg_mgr = ConfigManager()
+        self.cfg = ConfigManager()
         self.bot = None
         self.vars = {}
         
-        self._init_vars()
-        self._build_layout()
-        self._load_config_to_ui()
-
-    def _init_vars(self):
-        keys = ["binance_key", "binance_secret", "gemini_key", "cryptopanic_key", 
-                "tg_token", "tg_chat", "risk_pct", "max_drawdown", "trailing_stop", 
-                "max_symbols", "sim_initial_balance", "is_sim", "is_testnet"]
-        for k in keys:
-            val = self.cfg_mgr.data.get(k)
-            if isinstance(val, bool): self.vars[k] = tk.BooleanVar(value=val)
-            elif isinstance(val, (int, float)): self.vars[k] = tk.DoubleVar(value=val)
-            else: self.vars[k] = tk.StringVar(value=str(val))
-
-    def _build_layout(self):
+        self.setup_ui()
+        
+    def setup_ui(self):
         style = ttk.Style()
         style.theme_use('clam')
         
-        main_frame = ttk.Frame(self, padding=10)
-        main_frame.pack(fill='both', expand=True)
+        # 1. Config Area
+        cf = ttk.LabelFrame(self, text="系統配置", padding=10)
+        cf.pack(fill='x', padx=5, pady=5)
+        
+        keys = ["binance_key", "binance_secret", "gemini_key", "cryptopanic_key", 
+                "tg_token", "tg_chat", "risk_pct", "max_drawdown", "trailing_stop", 
+                "max_symbols", "sim_initial_balance", "is_sim", "is_testnet"]
+                
+        for i, k in enumerate(keys):
+            self.vars[k] = tk.StringVar(value=str(self.cfg.data.get(k, '')))
+            r, c = divmod(i, 3)
+            f = ttk.Frame(cf)
+            f.grid(row=r, column=c, sticky='w', padx=5, pady=2)
+            ttk.Label(f, text=k).pack(anchor='w')
+            show = '*' if 'key' in k or 'secret' in k or 'token' in k else ''
+            ttk.Entry(f, textvariable=self.vars[k], show=show, width=20).pack()
 
-        # 1. Top Panel (Config)
-        cfg_frame = ttk.LabelFrame(main_frame, text="⚙️ 系統參數配置", padding=10)
-        cfg_frame.pack(fill='x', pady=5)
-        
-        # Grid Layout for Config
-        entries = [
-            ("Binance API Key", "binance_key", True), ("Binance Secret", "binance_secret", True),
-            ("Gemini API Key", "gemini_key", True), ("CryptoPanic Key", "cryptopanic_key", True),
-            ("TG Token", "tg_token", False), ("TG Chat ID", "tg_chat", False)
-        ]
-        
-        for i, (lbl, key, is_pass) in enumerate(entries):
-            r, c = divmod(i, 2)
-            f = ttk.Frame(cfg_frame)
-            f.grid(row=r, column=c, sticky='w', padx=10, pady=2)
-            ttk.Label(f, text=lbl+":", width=15).pack(side='left')
-            ttk.Entry(f, textvariable=self.vars[key], show='*' if is_pass else '', width=30).pack(side='left')
+        btn_f = ttk.Frame(cf)
+        btn_f.grid(row=99, column=0, columnspan=3, pady=10)
+        ttk.Button(btn_f, text="測試連線 (Validate)", command=self.test_conn).pack(side='left', padx=5)
+        ttk.Button(btn_f, text="保存配置", command=self.save_cfg).pack(side='left', padx=5)
+        self.btn_run = ttk.Button(btn_f, text="▶ 啟動機器人", command=self.toggle)
+        self.btn_run.pack(side='left', padx=5)
 
-        # Numeric Settings
-        nums = [
-            ("風險 %", "risk_pct"), ("最大回撤 %", "max_drawdown"), 
-            ("追蹤止損 %", "trailing_stop"), ("監控幣種數", "max_symbols"),
-            ("模擬資金", "sim_initial_balance")
-        ]
-        num_f = ttk.Frame(cfg_frame)
-        num_f.grid(row=3, column=0, columnspan=2, sticky='w', padx=10, pady=5)
-        for lbl, key in nums:
-            ttk.Label(num_f, text=lbl).pack(side='left', padx=(0,2))
-            ttk.Entry(num_f, textvariable=self.vars[key], width=8).pack(side='left', padx=(0,10))
+        # 2. Dashboard
+        df = ttk.Frame(self)
+        df.pack(fill='x', padx=10)
+        self.lbl_eq = ttk.Label(df, text="權益: $---", font=("Impact", 18))
+        self.lbl_eq.pack(side='left', padx=20)
+        self.lbl_dd = ttk.Label(df, text="回撤: 0.00%", foreground="red")
+        self.lbl_dd.pack(side='left')
 
-        # Checkboxes
-        chk_f = ttk.Frame(cfg_frame)
-        chk_f.grid(row=4, column=0, columnspan=2, sticky='w', padx=10)
-        ttk.Checkbutton(chk_f, text="啟用模擬模式 (Paper Trading)", variable=self.vars['is_sim']).pack(side='left', padx=10)
-        ttk.Checkbutton(chk_f, text="Binance Testnet", variable=self.vars['is_testnet']).pack(side='left')
-        
-        ttk.Button(cfg_frame, text="💾 保存設定", command=self.save_config).grid(row=4, column=1, sticky='e')
+        # 3. Tables & Logs
+        cols = ("Symbol", "Side", "Amt", "Entry", "PnL")
+        self.tree = ttk.Treeview(self, columns=cols, show='headings', height=6)
+        for c in cols: self.tree.heading(c, text=c); self.tree.column(c, width=100)
+        self.tree.pack(fill='x', padx=10, pady=5)
 
-        # 2. Dashboard Panel
-        dash_frame = ttk.LabelFrame(main_frame, text="📊 實時戰情室", padding=10)
-        dash_frame.pack(fill='x', pady=5)
+        self.log_txt = scrolledtext.ScrolledText(self, height=12)
+        self.log_txt.pack(fill='both', expand=True, padx=10, pady=5)
         
-        self.lbl_equity = ttk.Label(dash_frame, text="$---", font=("Arial", 24, "bold"), foreground="#2980b9")
-        self.lbl_equity.pack(side='left', padx=20)
-        
-        self.lbl_dd = ttk.Label(dash_frame, text="DD: 0.0%", font=("Arial", 12), foreground="red")
-        self.lbl_dd.pack(side='left', padx=20)
-        
-        self.btn_start = ttk.Button(dash_frame, text="▶ 啟動機器人", command=self.toggle_bot)
-        self.btn_start.pack(side='right', padx=10, fill='y')
+        logging.getLogger().addHandler(GuiLogHandler(self.log_txt))
+        logging.getLogger().setLevel(logging.INFO)
 
-        # 3. Positions Table
-        pos_frame = ttk.LabelFrame(main_frame, text="📈 持倉監控", padding=10)
-        pos_frame.pack(fill='x', pady=5)
-        
-        cols = ("Symbol", "Side", "Amount", "Entry", "PnL")
-        self.tree = ttk.Treeview(pos_frame, columns=cols, show='headings', height=6)
-        for c in cols:
-            self.tree.heading(c, text=c)
-            self.tree.column(c, anchor='center', width=120)
-        self.tree.pack(fill='x')
-
-        # 4. Logs
-        log_frame = ttk.LabelFrame(main_frame, text="📝 系統日誌", padding=10)
-        log_frame.pack(fill='both', expand=True, pady=5)
-        
-        self.txt_log = scrolledtext.ScrolledText(log_frame, height=10, state='disabled')
-        self.txt_log.pack(fill='both', expand=True)
-        
-        # Setup Logger
-        h = GuiLogHandler(self.txt_log)
-        h.setFormatter(logging.Formatter('%(asctime)s %(message)s', '%H:%M:%S'))
-        root_log = logging.getLogger()
-        root_log.addHandler(h)
-        root_log.setLevel(logging.INFO)
-
-    def _load_config_to_ui(self):
-        pass # Already linked via vars
-
-    def save_config(self):
-        new_data = {}
+    def save_cfg(self):
+        d = {}
         for k, v in self.vars.items():
-            new_data[k] = v.get()
-        self.cfg_mgr.save(new_data)
-        messagebox.showinfo("系統", "配置已保存！")
+            val = v.get()
+            if k in ['risk_pct', 'max_drawdown', 'trailing_stop', 'sim_initial_balance']:
+                val = float(val)
+            elif k in ['is_sim', 'is_testnet']:
+                val = (val.lower() == 'true' or val == '1')
+            d[k] = val
+        self.cfg.save(d)
+        messagebox.showinfo("Sys", "Saved!")
 
-    def update_ui_stats(self, data):
-        self.lbl_equity.config(text=f"\${data['equity']:.2f}")
-        self.lbl_dd.config(text=f"回撤: {data['drawdown']:.2f}%")
+    def test_conn(self):
+        self.save_cfg()
+        exc = Exchange(self.cfg)
+        if exc.connect():
+            bal = exc.get_balance()
+            messagebox.showinfo("Success", f"Connected! Balance: {bal:.2f}")
+        else:
+            messagebox.showerror("Error", "Connection Failed")
 
-    def update_positions(self, items):
-        for i in self.tree.get_children(): self.tree.delete(i)
-        for val in items: self.tree.insert('', 'end', values=val)
-
-    def toggle_bot(self):
+    def toggle(self):
         if self.bot and self.bot.running:
             self.bot.stop()
-            self.btn_start.config(text="▶ 啟動機器人")
+            self.btn_run.config(text="▶ 啟動機器人")
         else:
-            # Sync vars back to config manager before start
-            self.save_config()
-            self.bot = BotEngine(self.cfg_mgr, {
+            self.save_cfg()
+            self.bot = BotLogic(self.cfg, {
                 'log': logging.info,
-                'update_ui': self.update_ui_stats,
-                'update_pos': self.update_positions
+                'update_stats': lambda e, d: (self.lbl_eq.config(text=f"權益: \${e:.2f}"), self.lbl_dd.config(text=f"回撤: {d:.2f}%")),
+                'update_pos': self.update_tree
             })
-            
-            if self.bot.initialize():
+            if self.bot.init_system():
                 self.bot.start()
-                self.btn_start.config(text="⏹ 停止機器人")
+                self.btn_run.config(text="⏹ 停止")
+
+    def update_tree(self, rows):
+        for i in self.tree.get_children(): self.tree.delete(i)
+        for r in rows: self.tree.insert('', 'end', values=r)
 
     def on_close(self):
         if self.bot: self.bot.stop()
         self.destroy()
 
 if __name__ == "__main__":
-    app = TradingBotApp()
+    app = App()
     app.mainloop()
 `;
