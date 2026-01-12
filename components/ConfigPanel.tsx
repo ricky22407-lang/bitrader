@@ -1,6 +1,6 @@
 import React from 'react';
-import { BotConfig, StrategyType, RiskLevel } from '../types';
-import { Settings, Sliders, Activity, MessageSquare, Layers } from 'lucide-react';
+import { BotConfig, StrategyType } from '../types';
+import { Settings, Sliders, Activity, MessageSquare, Layers, Key, AlertTriangle, Coins } from 'lucide-react';
 
 interface ConfigPanelProps {
   config: BotConfig;
@@ -15,12 +15,13 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
     setConfig(prev => ({ ...prev, strategy: e.target.value as StrategyType }));
   };
 
-  const handleRiskChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setConfig(prev => ({ ...prev, riskLevel: e.target.value as RiskLevel }));
+  const handleInputChange = (key: keyof BotConfig, value: string | number | boolean) => {
+    setConfig(prev => ({ ...prev, [key]: value }));
   };
 
-  const handleGridLevelsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setConfig(prev => ({ ...prev, gridLevels: parseInt(e.target.value) || 5 }));
+  const handlePairsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const pairs = e.target.value.split(',').map(p => p.trim()).filter(p => p.length > 0);
+    setConfig(prev => ({ ...prev, pairs }));
   };
 
   const toggleFeature = (key: keyof Pick<BotConfig, 'includeLogging' | 'includeWebsockets' | 'enableTelegram'>) => {
@@ -28,10 +29,63 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
   };
 
   return (
-    <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 flex flex-col gap-6 h-full">
+    <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 flex flex-col gap-6 h-full overflow-y-auto">
       <div className="flex items-center gap-2 pb-4 border-b border-slate-700">
         <Settings className="w-5 h-5 text-blue-400" />
         <h2 className="text-lg font-semibold text-white">機器人參數設定</h2>
+      </div>
+
+      {/* API Keys Section */}
+      <div className="space-y-4 bg-slate-900/50 p-4 rounded-lg border border-slate-700/50">
+        <div className="flex items-center gap-2 text-amber-400 text-sm font-medium">
+          <Key className="w-4 h-4" />
+          <span>API 金鑰配置 (本地運行用)</span>
+        </div>
+        
+        <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded text-xs text-amber-200/80 leading-relaxed">
+          <div className="flex gap-2">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <p>本程式僅在本地運行，將直接把您輸入的幣安 API 與 Gemini API 寫入生成的 Python 程式碼中，請放心使用，無安全疑慮。建議先用 Testnet 測試。</p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+           <input 
+            type="password" 
+            placeholder="Binance API Key"
+            value={config.binanceApiKey}
+            onChange={(e) => handleInputChange('binanceApiKey', e.target.value)}
+            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-blue-500 outline-none"
+           />
+           <input 
+            type="password" 
+            placeholder="Binance Secret Key"
+            value={config.binanceSecretKey}
+            onChange={(e) => handleInputChange('binanceSecretKey', e.target.value)}
+            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-blue-500 outline-none"
+           />
+           <input 
+            type="password" 
+            placeholder="Gemini API Key (Bot Logic)"
+            value={config.geminiApiKey}
+            onChange={(e) => handleInputChange('geminiApiKey', e.target.value)}
+            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-blue-500 outline-none"
+           />
+        </div>
+      </div>
+
+      {/* Pairs Input */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+          <Coins className="w-4 h-4" /> 交易對 (Symbols)
+        </label>
+        <input 
+          type="text" 
+          value={config.pairs.join(', ')}
+          onChange={handlePairsChange}
+          placeholder="BTC/USDT, ETH/USDT"
+          className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-sm text-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+        />
       </div>
 
       {/* Strategy Selection */}
@@ -50,20 +104,22 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
         </select>
       </div>
 
-      {/* Risk Level */}
+      {/* Risk Percentage */}
       <div className="space-y-2">
         <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-          <Sliders className="w-4 h-4" /> 風險管理 (Risk)
+          <Sliders className="w-4 h-4" /> 單筆風險 (Risk Per Trade)
         </label>
-        <select 
-          value={config.riskLevel}
-          onChange={handleRiskChange}
-          className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-sm text-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-        >
-          {Object.values(RiskLevel).map(r => (
-            <option key={r} value={r}>{r}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-3">
+            <input 
+              type="range" 
+              min="1" 
+              max="20" 
+              value={config.riskPercentage} 
+              onChange={(e) => handleInputChange('riskPercentage', parseInt(e.target.value))}
+              className="flex-1 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            />
+            <span className="text-slate-200 font-mono w-10 text-center">{config.riskPercentage}%</span>
+        </div>
       </div>
 
       {/* Grid Levels */}
@@ -77,10 +133,10 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
               min="3" 
               max="20" 
               value={config.gridLevels} 
-              onChange={handleGridLevelsChange}
+              onChange={(e) => handleInputChange('gridLevels', parseInt(e.target.value))}
               className="flex-1 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
-            <span className="text-slate-200 font-mono w-8 text-center">{config.gridLevels}</span>
+            <span className="text-slate-200 font-mono w-10 text-center">{config.gridLevels}</span>
         </div>
       </div>
 
@@ -117,7 +173,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
         </div>
       </div>
 
-      <div className="mt-auto pt-4">
+      <div className="mt-auto pt-4 pb-2">
         <button
           onClick={onGenerate}
           disabled={isGenerating}

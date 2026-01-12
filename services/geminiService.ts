@@ -18,13 +18,28 @@ export const generateBotStructure = async (config: BotConfig): Promise<Generated
     - Strategy: ${config.strategy}
     - Pairs: ${config.pairs.join(", ")}
     - Grid Levels: ${config.gridLevels}
-    - Risk Level: ${config.riskLevel}
+    - Risk Per Trade: ${config.riskPercentage}%
     - Features: ${config.includeWebsockets ? "WebSocket" : "REST"}, ${config.enableTelegram ? "Telegram Notification" : "Console Log Only"}
 
+    **CRITICAL: API KEY INJECTION**
+    The user has provided specific API keys to be used in this script. 
+    You MUST inject them directly into the 'Config' class variables as string literals.
+    - Binance API Key: "${config.binanceApiKey || ''}"
+    - Binance Secret: "${config.binanceSecretKey || ''}"
+    - Gemini API Key: "${config.geminiApiKey || ''}"
+    
+    If the key is empty string, fall back to 'os.getenv(...)'.
+
     Requirements for the Python Code:
-    1.  **Centralized Config Class**: Load ALL API keys (Binance, Gemini, Telegram) from \`os.getenv\` using \`dotenv\`. Define adjustable parameters (Stop Loss %, Take Profit %, Max Drawdown).
+    1.  **Centralized Config Class**: 
+        -   Define \`BINANCE_API_KEY\`, \`BINANCE_SECRET\`, and \`GEMINI_API_KEY\`.
+        -   If the injected value is present, use it directly (e.g. \`BINANCE_API_KEY = "actual_key_here"\`).
+        -   Otherwise use \`os.getenv\`.
+        -   Define \`RISK_PER_TRADE = ${config.riskPercentage / 100}\`.
+        -   Define \`GRID_LEVELS = ${config.gridLevels}\`.
     2.  **Notifier Class**: A unified class that logs to Console (logging library) AND sends Telegram messages (using \`requests\` to call Telegram API) if enabled.
     3.  **LLM Decision Engine Class**: A class structure to interact with Google Gemini API.
+        -   Use the injected \`GEMINI_API_KEY\`.
         -   Include a method \`analyze_market(symbol, data)\`.
         -   Include a \`_mock_response()\` fallback method so the script runs even without an API key (returning random Bullish/Bearish signals for testing).
     4.  **Risk Manager Class**:

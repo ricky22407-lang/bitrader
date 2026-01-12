@@ -3,7 +3,7 @@ import Header from './components/Header';
 import ConfigPanel from './components/ConfigPanel';
 import CodeViewer from './components/CodeViewer';
 import SimulatedChart from './components/SimulatedChart';
-import { BotConfig, StrategyType, RiskLevel, GeneratedContent } from './types';
+import { BotConfig, StrategyType, GeneratedContent } from './types';
 import { generateBotStructure } from './services/geminiService';
 import { AlertCircle, ShieldAlert } from 'lucide-react';
 
@@ -27,7 +27,7 @@ load_dotenv()
 
 # --- 1. 集中化配置 (Centralized Config) ---
 class Config:
-    # API Keys
+    # API Keys (可由 .env 或直接注入)
     BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
     BINANCE_SECRET = os.getenv('BINANCE_SECRET')
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
@@ -39,7 +39,7 @@ class Config:
     TIMEFRAME = '1h'
     GRID_LEVELS = 5            # 網格層數
     GRID_SPACING_PCT = 0.01    # 網格間距 (1%)
-    RISK_PER_TRADE = 0.05      # 單筆倉位風險
+    RISK_PER_TRADE = 0.05      # 單筆倉位風險 (5%)
     MAX_DRAWDOWN = 0.10        # 最大回撤熔斷 (10%)
     TRAILING_STOP_PCT = 0.02   # 移動停損 (2%)
     AUTO_COMPOUND = True       # 自動複利
@@ -69,17 +69,15 @@ class Notifier:
         if Config.TELEGRAM_TOKEN and Config.TELEGRAM_CHAT_ID:
             try:
                 # 實際應用建議使用非同步呼叫
-                # requests.get(f"https://api.telegram.org/bot{Config.TELEGRAM_TOKEN}/sendMessage?chat_id={Config.TELEGRAM_CHAT_ID}&text={message}")
                 pass
             except Exception as e:
                 logging.error(f"Telegram 發送失敗: {e}")
 
-# ... (完整代碼包含 AI 引擎, RiskManager, Backtrader 策略等)
-# 點擊 "生成 Python 機器人代碼" 以獲取完整版本
+# ... (此為演示代碼，請點擊生成按鈕獲取完整版本)
 `;
 
 const DEMO_SUMMARY = `歡迎使用 AI 幣安機器人鍛造場 (AI Crypto Bot Forge)。
-請在左側配置您的交易策略參數，AI 將為您生成全功能的 Python 交易機器人。
+請在左側配置您的 API 金鑰、交易對與策略參數，AI 將為您生成全功能的 Python 交易機器人。
 包含：AI 決策、網格交易、風險控管、Backtrader 回測架構與 Telegram 通知。`;
 
 const DEMO_CONTENT: GeneratedContent = {
@@ -89,10 +87,13 @@ const DEMO_CONTENT: GeneratedContent = {
 
 const App: React.FC = () => {
   const [config, setConfig] = useState<BotConfig>({
+    binanceApiKey: '',
+    binanceSecretKey: '',
+    geminiApiKey: '',
     exchanges: ['Binance'],
     pairs: ['BTC/USDT', 'ETH/USDT'],
     strategy: StrategyType.MOMENTUM,
-    riskLevel: RiskLevel.MEDIUM,
+    riskPercentage: 5,
     includeLogging: true,
     includeWebsockets: true,
     enableTelegram: false,
@@ -141,7 +142,7 @@ const App: React.FC = () => {
           
           {/* Left Column: Config & Chart */}
           <div className="lg:col-span-4 flex flex-col gap-6">
-            <div className="flex-shrink-0">
+            <div className="flex-shrink-0 h-full max-h-[800px] overflow-hidden">
                <ConfigPanel 
                 config={config} 
                 setConfig={setConfig} 
@@ -149,25 +150,27 @@ const App: React.FC = () => {
                 isGenerating={isGenerating}
               />
             </div>
-            
-            {/* Visual Flair: Simulated Chart */}
-            <div className="h-[400px] bg-slate-900 border border-slate-800 rounded-xl p-4 hidden lg:block shadow-lg">
-               <SimulatedChart />
-            </div>
           </div>
 
-          {/* Right Column: Code Output */}
-          <div className="lg:col-span-8 h-full min-h-[600px]">
-            <CodeViewer 
-              content={generatedContent} 
-              isGenerating={isGenerating} 
-            />
+          {/* Right Column: Code Output & Chart */}
+          <div className="lg:col-span-8 flex flex-col gap-6 h-full min-h-[600px]">
+             {/* Simulated Chart */}
+            <div className="h-[300px] bg-slate-900 border border-slate-800 rounded-xl p-4 hidden lg:block shadow-lg">
+               <SimulatedChart />
+            </div>
+            
+            <div className="flex-1">
+              <CodeViewer 
+                content={generatedContent} 
+                isGenerating={isGenerating} 
+              />
+            </div>
           </div>
         </div>
       </main>
 
        <footer className="py-6 text-center text-slate-600 text-sm">
-        <p>&copy; {new Date().getFullYear()} AI 幣安機器人鍛造場 (AI Crypto Bot Forge). Version 1.0.0 (Stable).</p>
+        <p>&copy; {new Date().getFullYear()} AI 幣安機器人鍛造場 (AI Crypto Bot Forge). Version 1.1.0 (Local Build).</p>
       </footer>
     </div>
   );
