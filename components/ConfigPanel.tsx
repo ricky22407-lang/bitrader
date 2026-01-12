@@ -1,6 +1,6 @@
 import React from 'react';
 import { BotConfig, StrategyType } from '../types';
-import { Settings, Sliders, Activity, MessageSquare, Layers, Key, AlertTriangle, Coins } from 'lucide-react';
+import { Settings, Sliders, Activity, MessageSquare, Layers, Key, AlertTriangle, Coins, TestTube } from 'lucide-react';
 
 interface ConfigPanelProps {
   config: BotConfig;
@@ -24,7 +24,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
     setConfig(prev => ({ ...prev, pairs }));
   };
 
-  const toggleFeature = (key: keyof Pick<BotConfig, 'includeLogging' | 'includeWebsockets' | 'enableTelegram'>) => {
+  const toggleFeature = (key: keyof Pick<BotConfig, 'includeLogging' | 'includeWebsockets' | 'enableTelegram' | 'isTestnet'>) => {
     setConfig(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
@@ -71,6 +71,18 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
             onChange={(e) => handleInputChange('geminiApiKey', e.target.value)}
             className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-blue-500 outline-none"
            />
+        </div>
+
+        <div className="flex items-center justify-between pt-2">
+          <span className="text-xs text-slate-300 flex items-center gap-2">
+             <TestTube className="w-3 h-3 text-yellow-400" /> 使用 Testnet 模式
+          </span>
+          <button 
+            onClick={() => toggleFeature('isTestnet')}
+            className={`w-8 h-4 rounded-full transition-colors relative ${config.isTestnet ? 'bg-yellow-600' : 'bg-slate-600'}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 bg-white w-3 h-3 rounded-full transition-transform ${config.isTestnet ? 'translate-x-4' : 'translate-x-0'}`} />
+          </button>
         </div>
       </div>
 

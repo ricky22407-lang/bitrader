@@ -1,177 +1,377 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Terminal, Play, Square, Activity, ShieldAlert, Cpu, Settings, Wallet } from 'lucide-react';
 import Header from './components/Header';
-import ConfigPanel from './components/ConfigPanel';
-import CodeViewer from './components/CodeViewer';
-import SimulatedChart from './components/SimulatedChart';
-import { BotConfig, StrategyType, GeneratedContent } from './types';
-import { generateBotStructure } from './services/geminiService';
-import { AlertCircle, ShieldAlert } from 'lucide-react';
-
-const DEMO_CODE = `import ccxt
-import os
-import time
-import json
-import logging
-import random
-import signal
-import sys
-import requests
-from datetime import datetime, timedelta
-import backtrader as bt
-import pandas as pd
-import google.generativeai as genai
-from dotenv import load_dotenv
-
-# 載入環境變數
-load_dotenv()
-
-# --- 1. 集中化配置 (Centralized Config) ---
-class Config:
-    # API Keys (可由 .env 或直接注入)
-    BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
-    BINANCE_SECRET = os.getenv('BINANCE_SECRET')
-    GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-    TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-    TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-    # 交易參數
-    SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
-    TIMEFRAME = '1h'
-    GRID_LEVELS = 5            # 網格層數
-    GRID_SPACING_PCT = 0.01    # 網格間距 (1%)
-    RISK_PER_TRADE = 0.05      # 單筆倉位風險 (5%)
-    MAX_DRAWDOWN = 0.10        # 最大回撤熔斷 (10%)
-    TRAILING_STOP_PCT = 0.02   # 移動停損 (2%)
-    AUTO_COMPOUND = True       # 自動複利
-
-    # 系統參數
-    BACKTEST_MODE = True
-    LOG_LEVEL = logging.INFO
-
-# --- 2. 繁體中文日誌與通知系統 ---
-logging.basicConfig(
-    level=Config.LOG_LEVEL,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-
-class Notifier:
-    """整合日誌與 Telegram 通知的通知器"""
-    @staticmethod
-    def send(message, level=logging.INFO):
-        # 1. 寫入本地日誌
-        if level == logging.ERROR:
-            logging.error(message)
-        else:
-            logging.info(message)
-
-        # 2. 發送 Telegram (若有設定)
-        if Config.TELEGRAM_TOKEN and Config.TELEGRAM_CHAT_ID:
-            try:
-                # 實際應用建議使用非同步呼叫
-                pass
-            except Exception as e:
-                logging.error(f"Telegram 發送失敗: {e}")
-
-# ... (此為演示代碼，請點擊生成按鈕獲取完整版本)
-`;
-
-const DEMO_SUMMARY = `歡迎使用 AI 幣安機器人鍛造場 (AI Crypto Bot Forge)。
-請在左側配置您的 API 金鑰、交易對與策略參數，AI 將為您生成全功能的 Python 交易機器人。
-包含：AI 決策、網格交易、風險控管、Backtrader 回測架構與 Telegram 通知。`;
-
-const DEMO_CONTENT: GeneratedContent = {
-  code: DEMO_CODE,
-  summary: DEMO_SUMMARY
-};
+import RealtimeChart from './components/RealtimeChart';
+import { BotConfig, StrategyType, Ticker, LogEntry, Position, Order, AccountState } from './types';
+import * as Exchange from './services/exchangeService';
+import * as AI from './services/geminiService';
 
 const App: React.FC = () => {
+  // --- App State ---
+  const [isConnected, setIsConnected] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
   const [config, setConfig] = useState<BotConfig>({
     binanceApiKey: '',
     binanceSecretKey: '',
     geminiApiKey: '',
-    exchanges: ['Binance'],
-    pairs: ['BTC/USDT', 'ETH/USDT'],
-    strategy: StrategyType.MOMENTUM,
+    symbol: 'BTC/USDT',
+    pairs: ['BTC/USDT'],
+    timeframe: '1m',
     riskPercentage: 5,
-    includeLogging: true,
-    includeWebsockets: true,
+    gridLevels: 5,
+    strategy: StrategyType.MOMENTUM,
+    isTestnet: true,
     enableTelegram: false,
-    gridLevels: 5
+    includeLogging: true,
+    includeWebsockets: false
   });
 
-  // Initialize with DEMO_CONTENT to show the result immediately
-  const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(DEMO_CONTENT);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // --- Trading State ---
+  const [tickers, setTickers] = useState<Ticker[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [account, setAccount] = useState<AccountState>({ balance: 0, equity: 0, dailyPnL: 0, winRate: 0 });
+  const [position, setPosition] = useState<Position>({ symbol: '', amount: 0, entryPrice: 0, unrealizedPnL: 0, side: 'NONE' });
+  const [orders, setOrders] = useState<Order[]>([]);
 
-  const handleGenerate = async () => {
-    setIsGenerating(true);
-    setError(null);
+  // --- Refs for Loop ---
+  const intervalRef = useRef<number | null>(null);
+  const lastAiCheck = useRef<number>(0);
+  const isProcessing = useRef(false);
+
+  // --- Helper Methods ---
+  const addLog = (type: LogEntry['type'], message: string) => {
+    setLogs(prev => [{
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: Date.now(),
+      type,
+      message
+    }, ...prev.slice(0, 49)]); // Keep last 50 logs
+  };
+
+  // --- Bot Loop (The Backend Logic) ---
+  const botLoop = async () => {
+    if (isProcessing.current) return;
+    isProcessing.current = true;
+
     try {
-      const content = await generateBotStructure(config);
-      setGeneratedContent(content);
-    } catch (err) {
-      setError("代碼生成失敗。請檢查您的 API 金鑰並重試。");
+      // 1. Fetch Market Data (Simulated)
+      const lastTicker = tickers.length > 0 ? tickers[tickers.length - 1] : { close: 42000, time: Date.now()/1000 } as Ticker;
+      const newTicker = Exchange.simulateTick(lastTicker.close);
+      
+      setTickers(prev => {
+        const updated = [...prev, newTicker];
+        return updated.slice(-200); // Keep last 200 candles for chart
+      });
+
+      // 2. Check Orders & Update Account
+      const filled = Exchange.checkOrders();
+      if (filled.length > 0) {
+        filled.forEach(o => addLog('TRADE', `${o.side} 訂單成交: ${o.amount} @ ${o.price.toFixed(2)}`));
+      }
+      
+      setAccount(Exchange.getAccountState());
+      setPosition(Exchange.getPosition());
+      setOrders(Exchange.getOpenOrders());
+
+      // 3. AI Decision (Every 5 seconds to save tokens)
+      const now = Date.now();
+      if (now - lastAiCheck.current > 5000 && isRunning) {
+        lastAiCheck.current = now;
+        addLog('INFO', 'AI 正在分析市場結構...');
+        
+        // Pass the API Key from config to the service
+        const decision = await AI.analyzeMarket(config.geminiApiKey, tickers, config.strategy, position.side);
+        
+        if (decision.confidence > 70) {
+          addLog('AI', `Gemini 建議: ${decision.action} (${decision.confidence}%) - ${decision.reasoning}`);
+          
+          // Auto-Trade Logic
+          if (decision.action === 'BUY' && position.side === 'NONE') {
+            Exchange.placeOrder({
+              symbol: config.symbol,
+              side: 'BUY',
+              type: 'MARKET',
+              price: 0,
+              amount: 0.1 // Fixed size for demo
+            });
+          } else if (decision.action === 'SELL' && position.side === 'LONG') {
+            Exchange.placeOrder({
+              symbol: config.symbol,
+              side: 'SELL',
+              type: 'MARKET',
+              price: 0,
+              amount: position.amount
+            });
+          }
+        }
+      }
+
+    } catch (e) {
+      console.error(e);
     } finally {
-      setIsGenerating(false);
+      isProcessing.current = false;
     }
   };
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 selection:bg-blue-500/30 font-sans">
-      <Header />
-      
-      {/* Safety Banner */}
-      <div className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-2">
-        <div className="container mx-auto flex items-center justify-center gap-2 text-xs md:text-sm text-amber-400">
-           <ShieldAlert className="w-4 h-4" />
-           <p>安全警告：本工具生成的代碼僅供學習與回測使用。在連接真實資金前，請務必先於 Binance Testnet 進行充分測試。開發者不對交易損失負責。</p>
+  // --- Effects ---
+  useEffect(() => {
+    if (isConnected) {
+      intervalRef.current = window.setInterval(botLoop, 1000); // 1s loop
+    }
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [isConnected, isRunning, tickers]); // Dependencies ensure fresh state in closure
+
+  // --- UI Handlers ---
+  const handleConnect = () => {
+    setIsConnected(true);
+    addLog('INFO', '已連線至仿真交易所 (Mock Exchange)');
+    addLog('INFO', 'Gemini AI 模組載入完成');
+    // Init some data
+    const initialData = [];
+    let price = 42000;
+    const now = Math.floor(Date.now() / 1000);
+    for(let i = 100; i > 0; i--) {
+        price = price * (1 + (Math.random() - 0.5) * 0.002);
+        initialData.push({
+            time: now - i,
+            open: price,
+            high: price + 10,
+            low: price - 10,
+            close: price,
+            volume: Math.random() * 10
+        });
+    }
+    setTickers(initialData);
+  };
+
+  const toggleBot = () => {
+    if (isRunning) {
+        setIsRunning(false);
+        addLog('WARNING', '機器人已手動暫停');
+    } else {
+        setIsRunning(true);
+        addLog('INFO', '機器人啟動交易循環...');
+    }
+  };
+
+  if (!isConnected) {
+    return (
+      <div className="min-h-screen bg-[#0b0f19] flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
+          <div className="flex justify-center mb-6">
+            <div className="p-3 bg-blue-600/20 rounded-xl">
+              <Terminal className="w-10 h-10 text-blue-500" />
+            </div>
+          </div>
+          <h1 className="text-2xl font-bold text-center text-white mb-2">Bitrader AI 儀表板</h1>
+          <p className="text-center text-slate-400 text-sm mb-8">
+            連接您的 Binance 帳戶與 Gemini 3 Pro 進行即時自動化交易。
+          </p>
+          
+          <div className="space-y-4">
+             <div>
+               <label className="text-xs text-slate-400 mb-1 block">Binance API Key (僅供模擬可留空)</label>
+               <input 
+                 type="password" 
+                 className="w-full bg-slate-950 border border-slate-800 rounded px-4 py-2 text-slate-200 outline-none focus:border-blue-500"
+                 value={config.binanceApiKey}
+                 onChange={(e) => setConfig({...config, binanceApiKey: e.target.value})}
+               />
+             </div>
+             <div>
+               <label className="text-xs text-slate-400 mb-1 block">Gemini API Key (建議填寫以啟用 AI)</label>
+               <input 
+                 type="password" 
+                 className="w-full bg-slate-950 border border-slate-800 rounded px-4 py-2 text-slate-200 outline-none focus:border-blue-500"
+                 value={config.geminiApiKey}
+                 onChange={(e) => setConfig({...config, geminiApiKey: e.target.value})}
+                 placeholder="sk-..."
+               />
+             </div>
+             <button 
+                onClick={handleConnect}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-lg transition-all"
+             >
+               啟動仿真交易系統
+             </button>
+             <p className="text-xs text-center text-slate-500 mt-4">
+               <ShieldAlert className="w-3 h-3 inline mr-1" />
+               本系統目前運行於「模擬環境」以確保資金安全。
+             </p>
+          </div>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#0b0f19] text-slate-200">
+      <Header />
       
-      <main className="container mx-auto px-4 py-8">
-        {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-3 text-red-400">
-            <AlertCircle className="w-5 h-5" />
-            <span>{error}</span>
+      <main className="container mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Left Col: Market & Chart */}
+        <div className="lg:col-span-8 flex flex-col gap-6">
+          {/* Chart Section */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
+             <div className="flex justify-between items-center mb-4">
+               <div className="flex items-center gap-3">
+                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                   <Activity className="w-5 h-5 text-blue-400" /> BTC/USDT
+                 </h2>
+                 <span className="text-2xl font-mono text-emerald-400">${tickers.length > 0 ? tickers[tickers.length-1].close.toFixed(2) : '---'}</span>
+               </div>
+               <div className="flex gap-2">
+                 <span className={`px-2 py-1 rounded text-xs font-mono border ${isRunning ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
+                    {isRunning ? 'RUNNING' : 'STOPPED'}
+                 </span>
+               </div>
+             </div>
+             <RealtimeChart data={tickers} />
           </div>
-        )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
-          
-          {/* Left Column: Config & Chart */}
-          <div className="lg:col-span-4 flex flex-col gap-6">
-            <div className="flex-shrink-0 h-full max-h-[800px] overflow-hidden">
-               <ConfigPanel 
-                config={config} 
-                setConfig={setConfig} 
-                onGenerate={handleGenerate}
-                isGenerating={isGenerating}
-              />
+          {/* Active Orders / Positions */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+              <h3 className="text-sm font-semibold text-slate-400 mb-3">當前持倉 (Positions)</h3>
+              {position.amount > 0 ? (
+                <div className="space-y-2">
+                   <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">方向</span>
+                      <span className="text-green-400 font-bold">{position.side}</span>
+                   </div>
+                   <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">數量</span>
+                      <span className="font-mono">{position.amount.toFixed(4)} BTC</span>
+                   </div>
+                   <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">未實現損益</span>
+                      <span className={`font-mono ${position.unrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {position.unrealizedPnL >= 0 ? '+' : ''}{position.unrealizedPnL.toFixed(2)} USDT
+                      </span>
+                   </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-600 text-sm">無持倉</div>
+              )}
             </div>
-          </div>
 
-          {/* Right Column: Code Output & Chart */}
-          <div className="lg:col-span-8 flex flex-col gap-6 h-full min-h-[600px]">
-             {/* Simulated Chart */}
-            <div className="h-[300px] bg-slate-900 border border-slate-800 rounded-xl p-4 hidden lg:block shadow-lg">
-               <SimulatedChart />
-            </div>
-            
-            <div className="flex-1">
-              <CodeViewer 
-                content={generatedContent} 
-                isGenerating={isGenerating} 
-              />
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+              <h3 className="text-sm font-semibold text-slate-400 mb-3">掛單監控 (Open Orders)</h3>
+              <div className="space-y-2 max-h-[120px] overflow-y-auto">
+                 {orders.length === 0 && <div className="text-center py-8 text-slate-600 text-sm">無掛單</div>}
+                 {orders.map(o => (
+                   <div key={o.id} className="flex justify-between items-center text-xs bg-slate-950 p-2 rounded border border-slate-800">
+                     <span className={o.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{o.side}</span>
+                     <span className="font-mono">{o.amount} @ {o.price.toFixed(2)}</span>
+                     <button className="text-slate-500 hover:text-white" onClick={() => Exchange.cancelOrder(o.id)}>取消</button>
+                   </div>
+                 ))}
+              </div>
             </div>
           </div>
         </div>
-      </main>
 
-       <footer className="py-6 text-center text-slate-600 text-sm">
-        <p>&copy; {new Date().getFullYear()} AI 幣安機器人鍛造場 (AI Crypto Bot Forge). Version 1.1.0 (Local Build).</p>
-      </footer>
+        {/* Right Col: Controls & Logs */}
+        <div className="lg:col-span-4 flex flex-col gap-6">
+           
+           {/* Account Summary */}
+           <div className="bg-gradient-to-br from-slate-900 to-slate-800 border border-slate-700 rounded-xl p-5 relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                 <Wallet className="w-24 h-24 text-white" />
+              </div>
+              <h3 className="text-slate-400 text-xs uppercase tracking-wider mb-1">總資產權益 (Equity)</h3>
+              <div className="text-3xl font-bold text-white font-mono mb-4">
+                ${account.equity.toFixed(2)}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <div className="text-xs text-slate-500">今日損益 (Daily PnL)</div>
+                    <div className={`font-mono ${account.dailyPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                       {account.dailyPnL >= 0 ? '+' : ''}{account.dailyPnL.toFixed(2)}
+                    </div>
+                 </div>
+                 <div>
+                    <div className="text-xs text-slate-500">勝率 (Win Rate)</div>
+                    <div className="text-blue-400 font-mono">{account.winRate.toFixed(1)}%</div>
+                 </div>
+              </div>
+           </div>
+
+           {/* Controls */}
+           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <h3 className="flex items-center gap-2 text-white font-semibold mb-4">
+                <Settings className="w-4 h-4" /> 機器人控制台
+              </h3>
+              
+              <div className="space-y-4 mb-6">
+                <div>
+                   <label className="text-xs text-slate-400 block mb-1">交易策略</label>
+                   <select 
+                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm text-slate-200 outline-none"
+                    value={config.strategy}
+                    onChange={(e) => setConfig({...config, strategy: e.target.value as StrategyType})}
+                   >
+                     {Object.values(StrategyType).map(s => <option key={s} value={s}>{s}</option>)}
+                   </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <button className="bg-green-600/20 hover:bg-green-600/30 text-green-400 border border-green-600/50 py-2 rounded text-sm transition-colors" onClick={() => Exchange.placeOrder({symbol: config.symbol, side: 'BUY', type: 'MARKET', amount: 0.1, price: 0})}>
+                     手動買入
+                  </button>
+                  <button className="bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/50 py-2 rounded text-sm transition-colors" onClick={() => Exchange.placeOrder({symbol: config.symbol, side: 'SELL', type: 'MARKET', amount: 0.1, price: 0})}>
+                     手動賣出
+                  </button>
+                </div>
+              </div>
+
+              <button
+                onClick={toggleBot}
+                className={`w-full py-3 rounded-lg font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+                    isRunning 
+                    ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-500/20' 
+                    : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20'
+                }`}
+              >
+                {isRunning ? (
+                    <><Square className="w-4 h-4 fill-current" /> 暫停自動交易</>
+                ) : (
+                    <><Play className="w-4 h-4 fill-current" /> 啟動 AI 託管</>
+                )}
+              </button>
+           </div>
+
+           {/* Logs */}
+           <div className="bg-[#050911] border border-slate-800 rounded-xl flex flex-col flex-1 min-h-[200px] overflow-hidden">
+             <div className="bg-slate-900/50 px-4 py-2 border-b border-slate-800 flex justify-between items-center">
+               <span className="text-xs text-slate-400 flex items-center gap-2">
+                 <Cpu className="w-3 h-3" /> 系統日誌
+               </span>
+               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+             </div>
+             <div className="p-4 overflow-y-auto flex-1 font-mono text-xs space-y-2 h-[300px]">
+               {logs.length === 0 && <span className="text-slate-700">等待系統事件...</span>}
+               {logs.map(log => (
+                 <div key={log.id} className="flex gap-2">
+                   <span className="text-slate-600">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                   <span className={`
+                     ${log.type === 'INFO' ? 'text-slate-300' : ''}
+                     ${log.type === 'TRADE' ? 'text-amber-400' : ''}
+                     ${log.type === 'AI' ? 'text-purple-400' : ''}
+                     ${log.type === 'WARNING' ? 'text-red-400' : ''}
+                   `}>
+                     {log.type === 'AI' && '🤖 '}{log.message}
+                   </span>
+                 </div>
+               ))}
+             </div>
+           </div>
+
+        </div>
+
+      </main>
     </div>
   );
 };
