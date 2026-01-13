@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi } from 'lightweight-charts';
+import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries } from 'lightweight-charts';
 import { Ticker } from '../types';
 
 interface ChartProps {
@@ -31,7 +31,7 @@ const RealtimeChart: React.FC<ChartProps> = ({ data }) => {
       }
     });
 
-    const candlestickSeries = chart.addCandlestickSeries({
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981', // Emerald 500
       downColor: '#ef4444', // Red 500
       borderVisible: false,

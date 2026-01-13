@@ -1,6 +1,6 @@
 import React from 'react';
 import { BotConfig, StrategyType } from '../types';
-import { Settings, Sliders, Activity, MessageSquare, Layers, Key, AlertTriangle, Coins, TestTube } from 'lucide-react';
+import { Settings, Sliders, Activity, MessageSquare, Layers, Coins } from 'lucide-react';
 
 interface ConfigPanelProps {
   config: BotConfig;
@@ -35,55 +35,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
         <h2 className="text-lg font-semibold text-white">機器人參數設定</h2>
       </div>
 
-      {/* API Keys Section */}
-      <div className="space-y-4 bg-slate-900/50 p-4 rounded-lg border border-slate-700/50">
-        <div className="flex items-center gap-2 text-amber-400 text-sm font-medium">
-          <Key className="w-4 h-4" />
-          <span>API 金鑰配置 (本地運行用)</span>
-        </div>
-        
-        <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded text-xs text-amber-200/80 leading-relaxed">
-          <div className="flex gap-2">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            <p>本程式僅在本地運行，將直接把您輸入的幣安 API 與 Gemini API 寫入生成的 Python 程式碼中，請放心使用，無安全疑慮。建議先用 Testnet 測試。</p>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-           <input 
-            type="password" 
-            placeholder="Binance API Key"
-            value={config.binanceApiKey}
-            onChange={(e) => handleInputChange('binanceApiKey', e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-blue-500 outline-none"
-           />
-           <input 
-            type="password" 
-            placeholder="Binance Secret Key"
-            value={config.binanceSecretKey}
-            onChange={(e) => handleInputChange('binanceSecretKey', e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-blue-500 outline-none"
-           />
-           <input 
-            type="password" 
-            placeholder="Gemini API Key (Bot Logic)"
-            value={config.geminiApiKey}
-            onChange={(e) => handleInputChange('geminiApiKey', e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-blue-500 outline-none"
-           />
-        </div>
-
-        <div className="flex items-center justify-between pt-2">
-          <span className="text-xs text-slate-300 flex items-center gap-2">
-             <TestTube className="w-3 h-3 text-yellow-400" /> 使用 Testnet 模式
-          </span>
-          <button 
-            onClick={() => toggleFeature('isTestnet')}
-            className={`w-8 h-4 rounded-full transition-colors relative ${config.isTestnet ? 'bg-yellow-600' : 'bg-slate-600'}`}
-          >
-            <span className={`absolute top-0.5 left-0.5 bg-white w-3 h-3 rounded-full transition-transform ${config.isTestnet ? 'translate-x-4' : 'translate-x-0'}`} />
-          </button>
-        </div>
+      <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded text-xs text-blue-200/80 leading-relaxed">
+        <p>配置下方的交易策略與參數，點擊「生成」按鈕即可獲得完整的 Python 交易機器人原始碼。API 金鑰請在本地運行的 config.json 中設定。</p>
       </div>
 
       {/* Pairs Input */}
@@ -181,6 +134,15 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate
             className={`w-10 h-5 rounded-full transition-colors relative ${config.enableTelegram ? 'bg-blue-600' : 'bg-slate-600'}`}
           >
             <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.enableTelegram ? 'translate-x-5' : 'translate-x-0'}`} />
+          </button>
+        </div>
+         <div className="flex items-center justify-between">
+          <span className="text-sm text-slate-300">Testnet 模式</span>
+          <button 
+            onClick={() => toggleFeature('isTestnet')}
+            className={`w-10 h-5 rounded-full transition-colors relative ${config.isTestnet ? 'bg-yellow-600' : 'bg-slate-600'}`}
+          >
+            <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.isTestnet ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
       </div>

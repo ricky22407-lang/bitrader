@@ -1,7 +1,4 @@
 export interface BotConfig {
-  binanceApiKey: string;
-  binanceSecretKey: string;
-  geminiApiKey: string;
   symbol: string;
   pairs: string[];
   timeframe: string;

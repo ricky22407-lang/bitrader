@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 # -----------------------------------------------------------------------------
-# 0. 自動化依賴管理
+# 0. 自動化依賴管理 (Dependency Management)
 # -----------------------------------------------------------------------------
 
 REQUIRED_LIBS = {
@@ -38,7 +38,7 @@ REQUIRED_LIBS = {
     'requests': 'requests',
     'websocket-client': 'websocket-client',
     'dotenv': 'python-dotenv',
-    'pillow': 'Pillow'  # For potential image handling if needed, usually good to have
+    'pillow': 'Pillow'
 }
 
 def check_dependencies():
@@ -74,7 +74,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
 # -----------------------------------------------------------------------------
-# 1. 核心組件: 配置與日誌
+# 1. 核心組件: 配置與日誌 (Config & Logging)
 # -----------------------------------------------------------------------------
 
 class ConfigManager:
@@ -141,7 +141,7 @@ class TelegramNotifier:
                 logging.error(f"TG Error: {e}")
 
 # -----------------------------------------------------------------------------
-# 2. 市場數據與 AI 分析
+# 2. 市場數據與 AI 分析 (Data & AI)
 # -----------------------------------------------------------------------------
 
 class NewsAgent:
@@ -246,7 +246,7 @@ class GeminiBrain:
             return {'action': 'HOLD', 'confidence': 0, 'reason': 'Error'}
 
 # -----------------------------------------------------------------------------
-# 3. 交易執行與 WebSocket
+# 3. 交易執行與 WebSocket (Exchange & Stream)
 # -----------------------------------------------------------------------------
 
 class WsClient(threading.Thread):
@@ -330,7 +330,7 @@ class Exchange:
         return self.ccxt.create_order(symbol, 'market', side, amount)
 
 # -----------------------------------------------------------------------------
-# 4. 策略邏輯與風控
+# 4. 策略邏輯與風控 (Logic & Risk)
 # -----------------------------------------------------------------------------
 
 class BotLogic:
@@ -510,7 +510,7 @@ class BotLogic:
             except Exception as e: logging.error(f"Close Fail: {e}")
 
 # -----------------------------------------------------------------------------
-# 5. Tkinter GUI
+# 5. Tkinter GUI (User Interface)
 # -----------------------------------------------------------------------------
 
 class App(tk.Tk):
@@ -602,14 +602,18 @@ class App(tk.Tk):
             self.save_cfg()
             self.bot = BotLogic(self.cfg, {
                 'log': logging.info,
-                'update_stats': lambda e, d: (self.lbl_eq.config(text=f"權益: \${e:.2f}"), self.lbl_dd.config(text=f"回撤: {d:.2f}%")),
-                'update_pos': self.update_tree
+                'update_stats': lambda e, d: self.after(0, lambda: self._update_stats_safe(e, d)),
+                'update_pos': lambda rows: self.after(0, lambda: self._update_tree_safe(rows))
             })
             if self.bot.init_system():
                 self.bot.start()
                 self.btn_run.config(text="⏹ 停止")
 
-    def update_tree(self, rows):
+    def _update_stats_safe(self, e, d):
+        self.lbl_eq.config(text=f"權益: \${e:.2f}")
+        self.lbl_dd.config(text=f"回撤: {d:.2f}%")
+
+    def _update_tree_safe(self, rows):
         for i in self.tree.get_children(): self.tree.delete(i)
         for r in rows: self.tree.insert('', 'end', values=r)
 

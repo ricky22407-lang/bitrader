@@ -7,15 +7,35 @@ export interface AIDecision {
   reasoning: string;
 }
 
+// Mock AI for Preview Mode
+const mockAnalyzeMarket = (strategy: StrategyType): AIDecision => {
+  const actions: ('BUY' | 'SELL' | 'HOLD')[] = ['BUY', 'SELL', 'HOLD'];
+  // Bias slightly towards HOLD to simulate realistic market
+  const rand = Math.random();
+  const action = rand > 0.7 ? 'BUY' : rand > 0.4 ? 'SELL' : 'HOLD';
+  
+  return {
+    action,
+    confidence: Math.floor(Math.random() * 30) + 60, // 60-90% confidence
+    reasoning: `[預覽模式] 模擬 ${strategy} 策略訊號生成 (無 API Key)`
+  };
+};
+
 export const analyzeMarket = async (
-  apiKey: string,
   tickers: Ticker[], 
   strategy: StrategyType,
   currentPosition: 'LONG' | 'SHORT' | 'NONE'
 ): Promise<AIDecision> => {
   
+  // Safely access env var
+  const apiKey = import.meta.env?.VITE_GEMINI_API_KEY;
+
+  // Use Mock Mode if no key is present (Preview Mode)
   if (!apiKey) {
-    return { action: 'HOLD', confidence: 0, reasoning: "未設定 Gemini API Key，跳過 AI 分析" };
+    console.warn("VITE_GEMINI_API_KEY not found. Using Mock AI for preview.");
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 800));
+    return mockAnalyzeMarket(strategy);
   }
 
   const ai = new GoogleGenAI({ apiKey });
@@ -45,7 +65,7 @@ export const analyzeMarket = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: prompt,
       config: {
         systemInstruction: systemInstruction,
@@ -61,6 +81,7 @@ export const analyzeMarket = async (
 
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
+    // Fallback to mock if API fails in preview, or return error
     return { action: 'HOLD', confidence: 0, reasoning: "AI 連線或解析錯誤" };
   }
 };
