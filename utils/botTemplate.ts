@@ -1,13 +1,20 @@
+
 import { BotConfig } from "../types";
 
 export const generatePythonBot = (config: BotConfig): string => {
   return `
 """
 ================================================================================
-   🤖 GEMINI AI TRADING FORGE - STANDALONE BOT (PYTHON v3.0)
+   🤖 GEMINI AI TRADER - HYBRID LOCAL CORE (PYTHON v4.0)
 ================================================================================
 
-[ 部署說明 / HOW TO RUN ]
+[ 架構說明 / ARCHITECTURE ]
+此腳本設計為「本地執行核心 (Execution Core)」。
+1. 它負責：連接交易所、執行 AI 決策、下單、以及將資料寫入本地 SQLite 資料庫。
+2. 它解決了瀏覽器長時間運行可能崩潰的問題。
+3. 您可以繼續使用 Web App 觀看 Binance 的即時餘額變動，作為「監控儀表板」。
+
+[ 部署步驟 / SETUP ]
 
 1. 安裝 Python (Install Python 3.9+):
    https://www.python.org/downloads/
@@ -16,14 +23,14 @@ export const generatePythonBot = (config: BotConfig): string => {
    pip install ccxt pandas pandas_ta google-genai openai python-dotenv colorama
 
 3. 設定環境變數 (.env):
-   Create a .env file with:
-   BINANCE_API_KEY=your_key
-   BINANCE_SECRET_KEY=your_secret
+   Create a .env file in the same folder:
+   BINANCE_API_KEY=your_binance_api_key
+   BINANCE_SECRET_KEY=your_binance_secret_key
    API_KEY=your_gemini_api_key
    GROK_API_KEY=your_xai_key (Optional)
 
 4. 啟動機器人:
-   python ai_forge_bot.py
+   python ai_trader.py
 
 ================================================================================
 """
@@ -34,8 +41,10 @@ import pandas_ta as ta
 import time
 import json
 import os
+import sqlite3
 import logging
 import sys
+import traceback
 from datetime import datetime
 from google import genai
 from openai import OpenAI
@@ -51,17 +60,66 @@ SYMBOL = "${config.symbol.replace('/', '')}"
 TIMEFRAME = "1m" 
 RISK_LEVEL = "${config.riskLevel}"
 INTERVAL_SEC = ${config.minPulse / 1000}
+DB_FILE = "trading_data.db"
+
 API_KEY_BINANCE = os.getenv("BINANCE_API_KEY")
 API_SECRET_BINANCE = os.getenv("BINANCE_SECRET_KEY")
-GEMINI_API_KEY = os.getenv("API_KEY") # Uses standard Env var name for GenAI
+GEMINI_API_KEY = os.getenv("API_KEY") 
 GROK_API_KEY = os.getenv("GROK_API_KEY")
 
-# --- LOGGING SETUP ---
+# --- LOGGING & DATABASE ---
 logging.basicConfig(
-    filename='forge_bot.log', 
+    filename='bot_system.log', 
     level=logging.INFO, 
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+def init_db():
+    """ Initialize SQLite Database for persistent storage """
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # Table: Trades
+    c.execute('''CREATE TABLE IF NOT EXISTS trades
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                  timestamp REAL, 
+                  symbol TEXT, 
+                  side TEXT, 
+                  price REAL, 
+                  amount REAL, 
+                  cost REAL, 
+                  reason TEXT)''')
+    # Table: Logs (AI Thoughts)
+    c.execute('''CREATE TABLE IF NOT EXISTS ai_logs
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                  timestamp REAL, 
+                  category TEXT, 
+                  message TEXT, 
+                  confidence REAL)''')
+    conn.commit()
+    conn.close()
+    print_log("Database initialized (SQLite).", "INFO")
+
+def save_trade_to_db(side, price, amount, cost, reason):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO trades (timestamp, symbol, side, price, amount, cost, reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  (time.time(), SYMBOL, side, price, amount, cost, reason))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print_log(f"DB Error: {e}", "ERROR")
+
+def save_log_to_db(category, message, confidence=0):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO ai_logs (timestamp, category, message, confidence) VALUES (?, ?, ?, ?)",
+                  (time.time(), category, message, confidence))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print_log(f"DB Error: {e}", "ERROR")
 
 def print_log(msg, type="INFO"):
     timestamp = datetime.now().strftime("%H:%M:%S")
@@ -83,262 +141,211 @@ try:
         'enableRateLimit': True,
         'options': {'defaultType': 'spot'} 
     })
-    # Sync time to avoid timestamp errors
     exchange.load_markets()
-    print_log(f"Connected to Binance. Trading {SYMBOL} on {TIMEFRAME}.", "INFO")
 except Exception as e:
-    print_log(f"Binance Connection Error: {e}", "ERROR")
+    print_log(f"Binance Config Error: {e}", "ERROR")
     print("Please check your API Keys in .env")
     sys.exit()
 
 # --- AI CLIENTS ---
-if GEMINI_API_KEY:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-else:
+if not GEMINI_API_KEY:
     print_log("CRITICAL: GEMINI_API_KEY missing in .env", "ERROR")
     sys.exit()
 
-if GROK_API_KEY:
-    grok_client = OpenAI(api_key=GROK_API_KEY, base_url="https://api.x.ai/v1")
-else:
-    grok_client = None
+client = genai.Client(api_key=GEMINI_API_KEY)
+grok_client = OpenAI(api_key=GROK_API_KEY, base_url="https://api.x.ai/v1") if GROK_API_KEY else None
 
-class ForgeBot:
+class HybridBot:
     def __init__(self):
         self.position = None 
         self.last_council_time = 0
-        self.sync_wallet_position()
+        init_db()
+        self.sync_state()
 
-    def sync_wallet_position(self):
-        """ Checks actual exchange balance to resume state """
+    def sync_state(self):
+        """ Sync local state with actual exchange balance """
         try:
             balance = exchange.fetch_balance()
-            base_currency = SYMBOL.replace("USDT", "")
-            amount = balance['total'].get(base_currency, 0)
+            base = SYMBOL.replace("USDT", "")
+            amount = balance['total'].get(base, 0)
             ticker = exchange.fetch_ticker(SYMBOL)
-            current_price = ticker['last']
-            usd_val = amount * current_price
+            price = ticker['last']
+            val = amount * price
             
-            if usd_val > 10: # Threshold to consider as active position
-                print_log(f"Detected existing position: {amount:.4f} {base_currency} (\${usd_val:.2f})", "INFO")
-                # conservative resume
+            if val > 15: # Valid position threshold
+                print_log(f"Resumed Position: {amount:.4f} {base} (\${val:.2f})", "INFO")
+                # Resume logic (simplified)
                 self.position = {
                     'amount': amount,
-                    'entry_price': current_price,
-                    'stop_loss': current_price * 0.95, 
-                    'take_profit': current_price * 1.10,
-                    'trailing_pct': 1.5,
-                    'highest_price': current_price,
-                    'trailing_trigger': current_price * (1 - 0.015)
+                    'entry_price': price, # Approximation if restart
+                    'stop_loss': price * 0.90, 
+                    'highest_price': price
                 }
             else:
                 self.position = None
         except Exception as e:
-            print_log(f"Wallet Sync Error: {e}", "ERROR")
+            print_log(f"Sync Error: {e}", "ERROR")
 
-    def fetch_data(self):
+    def get_market_data(self):
         try:
-            # Fetch 1m, 15m, 1h for context
             ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=100)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            
+            # Indicators
+            df['RSI'] = df.ta.rsi(length=14)
+            df['ATR'] = df.ta.atr(length=14)
+            df['EMA50'] = df.ta.ema(length=50)
+            
             return df
         except Exception as e:
-            print_log(f"Data Fetch Error: {e}", "ERROR")
+            print_log(f"Data Error: {e}", "ERROR")
             return None
 
-    def calculate_technicals(self, df):
-        # Indicators matching TS version
-        df['RSI'] = df.ta.rsi(length=14)
-        df['ATR'] = df.ta.atr(length=14)
-        
-        macd = df.ta.macd(fast=12, slow=26, signal=9)
-        df = pd.concat([df, macd], axis=1)
-        
-        df['EMA50'] = df.ta.ema(length=50)
-        df['EMA200'] = df.ta.ema(length=200)
-        
-        # Simple Pattern Logic
-        df['body'] = (df['close'] - df['open']).abs()
-        df['range'] = df['high'] - df['low']
-        df['doji'] = df['body'] <= df['range'] * 0.1
-        
-        return df
-
-    def run_scout_check(self, market_data):
-        """ Tier 1: Gemini Flash Scout (Cheap, Fast) """
+    def ask_scout(self, data):
+        """ Gemini Flash Scout """
         prompt = f"""
-        Role: HF Scout. Task: Decide if we need to wake the Strategy Council.
-        Data: {json.dumps(market_data)}
-        Rules: Escalate if RSI<30 or RSI>70, or Pattern detected, or Price crossed EMA.
-        Output JSON: {{"needsEscalation": bool, "reason": "string"}}
+        Role: Crypto Scout. 
+        Data: Price={data['close']}, RSI={data['RSI']}, ATR={data['ATR']}.
+        Task: Return JSON {{ "alert": bool, "reason": "brief" }}
+        Conditions: Alert if RSI < 30 (Oversold) or RSI > 70 (Overbought) or Price breakout.
         """
         try:
-            response = client.models.generate_content(
-                model='gemini-2.0-flash-exp', # Or gemini-2.0-flash
+            res = client.models.generate_content(
+                model='gemini-2.0-flash-exp', 
                 contents=prompt,
                 config={'response_mime_type': 'application/json'}
             )
-            return json.loads(response.text)
-        except Exception as e:
-            return {"needsEscalation": True, "reason": "Scout Error"}
+            return json.loads(res.text)
+        except:
+            return {"alert": False}
 
-    def convene_council(self, market_data, grok_input):
-        """ Tier 2: The Council (Reasoning) """
-        position_txt = "HOLDING" if self.position else "CASH"
-        
+    def ask_council(self, data, grok_opinion=""):
+        """ Gemini Pro Council """
+        pos_txt = "HOLDING" if self.position else "CASH"
         prompt = f"""
-        You are the Chairman of the AI Trading Council. 
-        Context: {SYMBOL}, Risk={RISK_LEVEL}. Status: {position_txt}
+        Role: Trading Council Chairman.
+        Asset: {SYMBOL}. Status: {pos_txt}. Risk: {RISK_LEVEL}.
         
         [Market]
-        Price: {market_data['price']}
-        RSI: {market_data['rsi']}
-        ATR: {market_data['atr']}
-        Trend: {market_data['trend']}
+        Price: {data['close']}
+        RSI: {data['RSI']:.2f}
+        ATR: {data['ATR']:.4f}
+        Trend: {'UP' if data['close'] > data['EMA50'] else 'DOWN'}
         
-        [Risk Officer (Grok)]
-        "{grok_input}"
-        
-        [Logic]
-        1. Trend Alignment: Don't go long against 1H trend.
-        2. Volatility Sizing: Reduce size if ATR is high.
-        3. Trailing Stop: Always set dynamic trailing (~2x ATR).
+        [Risk (Grok)] {grok_opinion}
         
         Output JSON:
         {{
             "action": "BUY" | "SELL" | "HOLD",
             "confidence": 0-100,
             "reasoning": "string",
-            "suggestedAmountPct": 0.1-1.0,
-            "stop_loss": number,
-            "take_profit": number,
-            "trailing_pct": number
+            "size_pct": 0.1-1.0
         }}
         """
         try:
-            response = client.models.generate_content(
+            res = client.models.generate_content(
                 model='gemini-2.0-flash-exp',
                 contents=prompt,
                 config={'response_mime_type': 'application/json'}
             )
-            return json.loads(response.text)
+            return json.loads(res.text)
         except Exception as e:
-            print_log(f"Council Error: {e}", "ERROR")
+            print_log(f"Council Fail: {e}", "ERROR")
             return {"action": "HOLD", "confidence": 0}
 
-    def execute(self, decision, current_price):
-        action = decision['action']
-        if action == 'HOLD': return
-
+    def execute_trade(self, action, current_price, size_pct=0.5, reason=""):
         try:
             if action == 'BUY' and not self.position:
-                # Calculate size
-                balance = exchange.fetch_balance()['USDT']['free']
-                size_pct = decision.get('suggestedAmountPct', 0.5)
-                usdt_amount = balance * size_pct
+                # Get Balance
+                bal = exchange.fetch_balance()['USDT']['free']
+                cost = bal * size_pct
+                if cost < 10: return
                 
-                if usdt_amount < 10: return
+                amount = cost / current_price
+                # EXECUTE ORDER
+                # order = exchange.create_market_buy_order(SYMBOL, cost) # UNCOMMENT FOR REAL MONEY
                 
-                print_log(f"💰 BUY EXECUTED: \${usdt_amount:.2f} @ {current_price}", "TRADE")
-                # REAL ORDER:
-                # exchange.create_market_buy_order(SYMBOL, usdt_amount) # Note: depends on exchange param requirements
+                print_log(f"🔵 BUY: \${cost:.2f} @ {current_price} | {reason}", "TRADE")
+                save_trade_to_db("BUY", current_price, amount, cost, reason)
                 
-                # Mock Position update for simulation if you run this without real money
                 self.position = {
-                    'amount': usdt_amount / current_price,
+                    'amount': amount,
                     'entry_price': current_price,
-                    'stop_loss': decision.get('stop_loss', current_price*0.95),
-                    'take_profit': decision.get('take_profit', current_price*1.1),
-                    'trailing_pct': decision.get('trailing_pct', 1.5),
-                    'highest_price': current_price,
-                    'trailing_trigger': current_price * (1 - (decision.get('trailing_pct', 1.5)/100))
+                    'stop_loss': current_price * 0.95,
+                    'highest_price': current_price
                 }
-                
+
             elif action == 'SELL' and self.position:
-                print_log(f"💰 SELL EXECUTED @ {current_price}. PnL logic here.", "TRADE")
-                # REAL ORDER:
-                # exchange.create_market_sell_order(SYMBOL, self.position['amount'])
+                amount = self.position['amount']
+                # EXECUTE ORDER
+                # order = exchange.create_market_sell_order(SYMBOL, amount) # UNCOMMENT FOR REAL MONEY
+                
+                revenue = amount * current_price
+                print_log(f"🔴 SELL: \${revenue:.2f} @ {current_price} | {reason}", "TRADE")
+                save_trade_to_db("SELL", current_price, amount, revenue, reason)
+                
                 self.position = None
-
+                
         except Exception as e:
-            print_log(f"Execution Failed: {e}", "ERROR")
+            print_log(f"Exec Error: {e}", "ERROR")
 
-    def loop(self):
-        print_log(f"🔥 Forge Bot Active. Strategy: Scout({INTERVAL_SEC}s) -> Council.", "INFO")
+    def run(self):
+        print_log(f"🚀 System Started. Monitoring {SYMBOL}...", "INFO")
         
         while True:
             try:
-                # 1. Data & Techs
-                df = self.fetch_data()
-                if df is None:
+                df = self.get_market_data()
+                if df is None: 
                     time.sleep(10)
                     continue
-                    
-                df = self.calculate_technicals(df)
+                
                 curr = df.iloc[-1]
                 price = curr['close']
                 
-                # 2. Local Protection (Stop Loss / Trailing)
+                # 1. Stop Loss Check (Local Priority)
                 if self.position:
-                    pos = self.position
-                    # Trailing Logic
-                    if price > pos['highest_price']:
-                        pos['highest_price'] = price
-                        if pos['trailing_pct']:
-                            new_trig = price * (1 - (pos['trailing_pct']/100))
-                            if new_trig > pos['trailing_trigger']:
-                                pos['trailing_trigger'] = new_trig
-                                print_log(f"🛡️ Trailing Stop -> {new_trig:.2f}", "INFO")
-                    
-                    # Triggers
-                    if price <= pos['stop_loss']:
-                        print_log("STOP LOSS HIT", "TRADE")
-                        self.execute({'action': 'SELL'}, price)
+                    # Update Trailing High
+                    if price > self.position['highest_price']:
+                        self.position['highest_price'] = price
+                        # Dynamic SL update logic could go here
+                        
+                    if price < self.position['stop_loss']:
+                        self.execute_trade('SELL', price, 1.0, "Stop Loss Hit")
                         continue
-                    if price <= pos['trailing_trigger']:
-                        print_log("TRAILING STOP HIT", "TRADE")
-                        self.execute({'action': 'SELL'}, price)
-                        continue
-                
-                # 3. AI Cycle
+
+                # 2. AI Cycle
                 now = time.time()
                 if now - self.last_council_time > INTERVAL_SEC:
-                    market_payload = {
-                        "price": price,
-                        "rsi": curr['RSI'],
-                        "atr": curr['ATR'],
-                        "trend": "UP" if price > curr['EMA50'] else "DOWN"
-                    }
+                    scout = self.ask_scout(curr)
                     
-                    # Step A: Scout
-                    scout = self.run_scout_check(market_payload)
-                    if scout.get('needsEscalation'):
-                        print_log(f"🚨 Scout Alert: {scout.get('reason')}. Waking Council.", "SCOUT")
+                    if scout.get('alert'):
+                        print_log(f"👀 Scout Alert: {scout['reason']}", "SCOUT")
                         
-                        # Step B: Council
-                        grok_msg = "Grok unavailable"
-                        if grok_client:
-                            # Simple Grok call simulated
-                            pass 
+                        grok_msg = ""
+                        # if grok_client: ... (Grok logic)
                         
-                        decision = self.convene_council(market_payload, grok_msg)
-                        print_log(f"⚖️ Council: {decision['action']} ({decision['confidence']}%)", "COUNCIL")
+                        decision = self.ask_council(curr, grok_msg)
+                        
+                        save_log_to_db("COUNCIL", decision.get('reasoning'), decision.get('confidence'))
+                        print_log(f"🧠 Decision: {decision['action']} ({decision['confidence']}%)", "COUNCIL")
                         
                         if decision['confidence'] > 75:
-                            self.execute(decision, price)
+                            self.execute_trade(decision['action'], price, decision.get('size_pct', 0.5), decision.get('reasoning'))
                         
                         self.last_council_time = now
                     else:
-                        print_log("Scout: Market boring. Sleep.", "SCOUT")
+                        pass
+                        # print_log("Scout: Market Quiet", "SCOUT")
 
             except Exception as e:
-                print_log(f"Loop Exception: {e}", "ERROR")
+                print_log(f"Loop Error: {e}", "ERROR")
+                traceback.print_exc()
             
-            time.sleep(10) # Fast tick loop for Stops, AI checks interval logic above
+            time.sleep(10)
 
 if __name__ == "__main__":
-    bot = ForgeBot()
-    bot.loop()
+    bot = HybridBot()
+    bot.run()
 `;
 };
