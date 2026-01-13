@@ -1,56 +1,51 @@
-# AI Crypto Bot Forge
+# AI Trader
 
-AI Crypto Bot Forge is a React-based web application that allows users to configure, simulate, and generate Python-based algorithmic trading bots for Binance. It leverages the Google Gemini API for market analysis simulation and code generation.
+AI Trader is a React-based autonomous trading agent powered by Google Gemini 2.0 Flash. It runs entirely in your browser, simulating a professional trading desk environment where AI agents (Scout, Analyst, Risk Officer) collaborate to make trading decisions.
 
 ## Features
 
-- **Bot Configuration**: Customize pairs, strategies, risk settings, and more.
-- **Market Simulation**: Visualize real-time price ticks and AI-driven trade signals.
-- **Code Generation**: instantly generate a production-ready Python trading bot (`bot.py`) based on your configuration.
-- **Security**: No API keys are stored or processed on the client for the generated bot. Keys for the web simulation are handled via environment variables.
+- **Live Market Monitor**: Real-time candlestick charts powered by Binance WebSocket.
+- **AI Council Strategy**: A multi-agent system where Gemini acts as both Analyst and Chairman, with optional Grok integration for Risk Assessment.
+- **Autonomous Execution**:
+    - **Scout (Flash)**: Continuously scans for volatility and patterns (low cost).
+    - **Council (Flash/Pro)**: Convenes only when the Scout detects opportunities (high intelligence).
+- **Risk Management**: Auto-calculated Stop Loss, Take Profit, and Dynamic Trailing Stops based on ATR (Volatility).
+- **Simulation & Real Money**: Start in simulation mode to test strategies, then switch to Real Money (requires Binance API keys).
+- **Persistent State**: Keeps track of your portfolio and trade history using IndexedDB.
 
-## Deployment on Vercel
+## Deployment
 
-This project is optimized for deployment on [Vercel](https://vercel.com).
+This project is optimized for [Vercel](https://vercel.com). Since it runs in the browser, you just need to keep the tab open for the bot to trade.
 
 ### Prerequisites
 
-1.  A Vercel account.
-2.  A Google Gemini API Key. Get one at [Google AI Studio](https://aistudio.google.com/).
+1.  A Google Gemini API Key. Get one at [Google AI Studio](https://aistudio.google.com/).
+2.  (Optional) Binance API Keys for Real Money trading.
 
-### Steps
-
-1.  **Push to GitHub**: Push this repository to your GitHub account.
-2.  **Import to Vercel**:
-    *   Go to your Vercel Dashboard.
-    *   Click **"Add New..."** -> **"Project"**.
-    *   Import your GitHub repository.
-3.  **Configure Environment Variables**:
-    *   In the "Environment Variables" section of the Vercel project settings:
-    *   Add `VITE_GEMINI_API_KEY` and set it to your Gemini API Key.
-4.  **Deploy**: Click **"Deploy"**.
-
-### Local Development
+### Setup
 
 1.  Clone the repo.
-2.  Copy `.env.example` to `.env`:
+2.  Copy `.env.example` to `.env` and add your keys:
     ```bash
-    cp .env.example .env
+    VITE_GEMINI_API_KEY=your_gemini_key
+    # Optional for Real Trading
+    VITE_BINANCE_API_KEY=your_binance_key
+    VITE_BINANCE_SECRET_KEY=your_binance_secret
     ```
-3.  Edit `.env` and add your `VITE_GEMINI_API_KEY`.
-4.  Install dependencies:
+3.  Install dependencies:
     ```bash
     npm install
     ```
-5.  Start the development server:
+4.  Start:
     ```bash
     npm run dev
     ```
 
-## Usage
+## How it Works
 
-1.  Open the web app.
-2.  Adjust the bot settings in the left panel.
-3.  Watch the simulation in the center dashboard.
-4.  Click **"生成 Python 機器人代碼"**.
-5.  Download the code, configure your `config.json` locally with your Binance keys, and run it!
+1.  **The Loop**: The app connects to Binance WS to get live prices.
+2.  **The Scout**: Every few seconds (configurable), Gemini Flash scans the technical indicators (RSI, MACD, Patterns).
+3.  **The Council**: If the Scout finds an opportunity, the full AI Council is summoned to analyze higher timeframes (15m, 1h) and debate the best course of action.
+4.  **Execution**: Trades are executed directly via Binance API (if configured) or simulated in the browser.
+
+*Note: For 24/7 operation, ensure your computer does not sleep and the browser tab remains active.*

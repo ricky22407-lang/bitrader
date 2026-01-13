@@ -1,174 +1,201 @@
-import React from 'react';
-import { BotConfig, StrategyType } from '../types';
-import { Settings, Sliders, Activity, MessageSquare, Layers, Coins } from 'lucide-react';
+
+import React, { useState } from 'react';
+import { BotConfig } from '../types';
+import { Power, Gauge, ShieldAlert, Activity, Skull, Crosshair, RefreshCw, MousePointerClick, Zap } from 'lucide-react';
+import { setTradingMode } from '../services/exchangeService';
 
 interface ConfigPanelProps {
   config: BotConfig;
   setConfig: React.Dispatch<React.SetStateAction<BotConfig>>;
-  onGenerate: () => void;
-  isGenerating: boolean;
+  isRunning: boolean;
+  onToggle: () => void;
+  onPanic: () => void;
+  onManualTrade: (side: 'BUY' | 'SELL', amountPct: number) => void;
+  onForceScan: () => void;
+  portfolioValue: number;
 }
 
-const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, onGenerate, isGenerating }) => {
+const ConfigPanel: React.FC<ConfigPanelProps> = ({ 
+  config, setConfig, isRunning, onToggle, onPanic, onManualTrade, onForceScan, portfolioValue 
+}) => {
   
-  const handleStrategyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setConfig(prev => ({ ...prev, strategy: e.target.value as StrategyType }));
-  };
+  const [manualLoading, setManualLoading] = useState(false);
 
-  const handleInputChange = (key: keyof BotConfig, value: string | number | boolean) => {
+  const handleInputChange = (key: keyof BotConfig, value: any) => {
+    if (isRunning) return; 
     setConfig(prev => ({ ...prev, [key]: value }));
+    if (key === 'tradingMode') {
+      setTradingMode(value);
+    }
   };
 
-  const handlePairsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const pairs = e.target.value.split(',').map(p => p.trim()).filter(p => p.length > 0);
-    setConfig(prev => ({ ...prev, pairs }));
-  };
-
-  const toggleFeature = (key: keyof Pick<BotConfig, 'includeLogging' | 'includeWebsockets' | 'enableTelegram' | 'isTestnet'>) => {
-    setConfig(prev => ({ ...prev, [key]: !prev[key] }));
+  const handleManualAction = (side: 'BUY' | 'SELL', pct: number) => {
+    setManualLoading(true);
+    onManualTrade(side, pct);
+    setTimeout(() => setManualLoading(false), 1000);
   };
 
   return (
-    <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 flex flex-col gap-6 h-full overflow-y-auto">
-      <div className="flex items-center gap-2 pb-4 border-b border-slate-700">
-        <Settings className="w-5 h-5 text-blue-400" />
-        <h2 className="text-lg font-semibold text-white">機器人參數設定</h2>
-      </div>
-
-      <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded text-xs text-blue-200/80 leading-relaxed">
-        <p>配置下方的交易策略與參數，點擊「生成」按鈕即可獲得完整的 Python 交易機器人原始碼。API 金鑰請在本地運行的 config.json 中設定。</p>
-      </div>
-
-      {/* Pairs Input */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-          <Coins className="w-4 h-4" /> 交易對 (Symbols)
-        </label>
-        <input 
-          type="text" 
-          value={config.pairs.join(', ')}
-          onChange={handlePairsChange}
-          placeholder="BTC/USDT, ETH/USDT"
-          className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-sm text-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-        />
-      </div>
-
-      {/* Strategy Selection */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-          <Activity className="w-4 h-4" /> 交易策略 (Strategy)
-        </label>
-        <select 
-          value={config.strategy}
-          onChange={handleStrategyChange}
-          className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-sm text-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-        >
-          {Object.values(StrategyType).map(s => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Risk Percentage */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-          <Sliders className="w-4 h-4" /> 單筆風險 (Risk Per Trade)
-        </label>
-        <div className="flex items-center gap-3">
-            <input 
-              type="range" 
-              min="1" 
-              max="20" 
-              value={config.riskPercentage} 
-              onChange={(e) => handleInputChange('riskPercentage', parseInt(e.target.value))}
-              className="flex-1 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-            <span className="text-slate-200 font-mono w-10 text-center">{config.riskPercentage}%</span>
+    <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 flex flex-col gap-6 h-full overflow-y-auto custom-scrollbar">
+      {/* Title */}
+      <div className="flex items-center justify-between pb-4 border-b border-slate-700">
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          <Gauge className="w-5 h-5 text-indigo-400" />
+          Command Center
+        </h2>
+        <div className={`px-2 py-0.5 rounded text-xs font-mono border ${isRunning ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-700 border-slate-600 text-slate-400'}`}>
+          {isRunning ? 'AUTO-PILOT ON' : 'MANUAL / STANDBY'}
         </div>
       </div>
 
-      {/* Grid Levels */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-          <Layers className="w-4 h-4" /> 網格層數 (Grid Levels)
-        </label>
-        <div className="flex items-center gap-3">
-            <input 
-              type="range" 
-              min="3" 
-              max="20" 
-              value={config.gridLevels} 
-              onChange={(e) => handleInputChange('gridLevels', parseInt(e.target.value))}
-              className="flex-1 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-            <span className="text-slate-200 font-mono w-10 text-center">{config.gridLevels}</span>
-        </div>
-      </div>
-
-      {/* Toggles */}
-      <div className="space-y-4 pt-2 border-t border-slate-700">
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-slate-300">啟用詳細日誌 (Logs)</span>
-          <button 
-            onClick={() => toggleFeature('includeLogging')}
-            className={`w-10 h-5 rounded-full transition-colors relative ${config.includeLogging ? 'bg-blue-600' : 'bg-slate-600'}`}
-          >
-            <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.includeLogging ? 'translate-x-5' : 'translate-x-0'}`} />
-          </button>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-slate-300">啟用 WebSocket 串流</span>
-          <button 
-            onClick={() => toggleFeature('includeWebsockets')}
-            className={`w-10 h-5 rounded-full transition-colors relative ${config.includeWebsockets ? 'bg-blue-600' : 'bg-slate-600'}`}
-          >
-            <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.includeWebsockets ? 'translate-x-5' : 'translate-x-0'}`} />
-          </button>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-slate-300 flex items-center gap-2">
-             <MessageSquare className="w-3 h-3" /> Telegram 通知
-          </span>
-          <button 
-            onClick={() => toggleFeature('enableTelegram')}
-            className={`w-10 h-5 rounded-full transition-colors relative ${config.enableTelegram ? 'bg-blue-600' : 'bg-slate-600'}`}
-          >
-            <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.enableTelegram ? 'translate-x-5' : 'translate-x-0'}`} />
-          </button>
-        </div>
-         <div className="flex items-center justify-between">
-          <span className="text-sm text-slate-300">Testnet 模式</span>
-          <button 
-            onClick={() => toggleFeature('isTestnet')}
-            className={`w-10 h-5 rounded-full transition-colors relative ${config.isTestnet ? 'bg-yellow-600' : 'bg-slate-600'}`}
-          >
-            <span className={`absolute top-1 left-1 bg-white w-3 h-3 rounded-full transition-transform ${config.isTestnet ? 'translate-x-5' : 'translate-x-0'}`} />
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-auto pt-4 pb-2">
+      {/* Main Auto-Pilot Control */}
+      <div className="space-y-3">
         <button
-          onClick={onGenerate}
-          disabled={isGenerating}
-          className={`w-full py-3 px-4 rounded-lg font-semibold text-white transition-all shadow-lg 
-            ${isGenerating 
-              ? 'bg-slate-700 cursor-not-allowed opacity-75' 
-              : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-500/25 active:scale-95'
+            onClick={onToggle}
+            className={`w-full py-4 px-4 rounded-xl font-bold text-white transition-all shadow-xl flex items-center justify-center gap-3 border
+            ${isRunning 
+                ? 'bg-emerald-600 border-emerald-500 hover:bg-emerald-500 shadow-emerald-500/20' 
+                : 'bg-slate-700 border-slate-600 hover:bg-slate-600 text-slate-300'
             }`}
         >
-          {isGenerating ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              AI 生成中...
-            </span>
-          ) : (
-            "生成 Python 機器人代碼"
-          )}
+            <Power className="w-6 h-6" />
+            {isRunning ? "SYSTEM ARMED" : "ENGAGE AUTO-PILOT"}
         </button>
+
+        {/* Force Scan Button (Only when running) */}
+        {isRunning && (
+             <button
+                onClick={onForceScan}
+                className="w-full py-2 px-4 rounded-lg text-xs font-bold text-indigo-200 bg-indigo-900/40 border border-indigo-500/30 hover:bg-indigo-900/60 transition-all flex items-center justify-center gap-2"
+             >
+                <RefreshCw className="w-3 h-3" />
+                FORCE AI ANALYSIS NOW
+             </button>
+        )}
+      </div>
+
+      {/* TACTICAL OVERRIDE */}
+      <div className="bg-slate-900/60 rounded-xl border border-slate-700 p-4 space-y-3">
+         <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
+            <Crosshair className="w-3 h-3 text-amber-400" /> Tactical Override
+         </div>
+         
+         <div className="grid grid-cols-2 gap-3">
+             <div className="space-y-2">
+                 <button 
+                    disabled={manualLoading}
+                    onClick={() => handleManualAction('BUY', 0.25)}
+                    className="w-full py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-bold rounded transition-all flex items-center justify-center gap-1"
+                 >
+                    BUY 25%
+                 </button>
+                 <button 
+                    disabled={manualLoading}
+                    onClick={() => handleManualAction('BUY', 0.5)}
+                    className="w-full py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-bold rounded transition-all flex items-center justify-center gap-1"
+                 >
+                    <MousePointerClick className="w-3 h-3" /> BUY 50%
+                 </button>
+             </div>
+             
+             <div className="space-y-2">
+                 <button 
+                    disabled={manualLoading}
+                    onClick={() => handleManualAction('SELL', 0.5)}
+                    className="w-full py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 text-xs font-bold rounded transition-all flex items-center justify-center gap-1"
+                 >
+                    SELL 50%
+                 </button>
+                 <button 
+                    disabled={manualLoading}
+                    onClick={() => handleManualAction('SELL', 1.0)}
+                    className="w-full py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 text-xs font-bold rounded transition-all flex items-center justify-center gap-1"
+                 >
+                    <MousePointerClick className="w-3 h-3" /> SELL ALL
+                 </button>
+             </div>
+         </div>
+      </div>
+
+      {/* Emergency Kill Switch */}
+      {isRunning && (
+          <button
+            onClick={onPanic}
+            className="w-full py-3 px-4 rounded-xl font-bold text-white transition-all shadow-xl flex items-center justify-center gap-2 border bg-rose-900/80 border-rose-600 hover:bg-rose-800 animate-pulse"
+          >
+            <Skull className="w-5 h-5 text-rose-200" />
+            PANIC: LIQUIDATE & STOP
+          </button>
+      )}
+
+      <div className="h-px bg-slate-700 my-2"></div>
+
+      {/* Configuration Settings */}
+      <div className="space-y-6">
+        
+        {/* TRADING MODE SELECTOR */}
+        <div className={`space-y-2 ${isRunning ? 'opacity-50 pointer-events-none' : ''}`}>
+           <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+             <Zap className="w-4 h-4 text-amber-400" /> Execution Mode
+           </label>
+           <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700">
+             <button
+               onClick={() => handleInputChange('tradingMode', 'SIMULATION')}
+               className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${config.tradingMode === 'SIMULATION' ? 'bg-slate-600 text-white' : 'text-slate-500'}`}
+             >
+               SIMULATION
+             </button>
+             <button
+               onClick={() => handleInputChange('tradingMode', 'REAL_MONEY')}
+               className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${config.tradingMode === 'REAL_MONEY' ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/50' : 'text-slate-500'}`}
+             >
+               REAL MONEY
+             </button>
+           </div>
+        </div>
+
+        {/* Smart Pulse Indicator */}
+        <div className={`space-y-2 ${isRunning ? 'opacity-80' : ''}`}>
+           <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+             <Activity className="w-4 h-4 text-emerald-400" /> Smart Pulse (Auto)
+           </label>
+           <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700 text-xs text-slate-400">
+               {isRunning ? (
+                   <span className="flex items-center gap-2">
+                       <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                       AI adapts scan rate based on market volatility (ATR).
+                   </span>
+               ) : (
+                   "System adjusts heartbeat (30s - 5m) automatically."
+               )}
+           </div>
+        </div>
+
+        {/* Risk Level */}
+        <div className={`space-y-2 ${isRunning ? 'opacity-50 pointer-events-none' : ''}`}>
+          <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4" /> Risk Protocol
+          </label>
+          <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 mb-2">
+            {['LOW', 'MEDIUM', 'HIGH'].map((level) => (
+              <button
+                key={level}
+                onClick={() => handleInputChange('riskLevel', level)}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${
+                  config.riskLevel === level 
+                    ? level === 'HIGH' ? 'bg-red-500 text-white' : level === 'MEDIUM' ? 'bg-amber-500 text-white' : 'bg-blue-500 text-white'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {level}
+              </button>
+            ))}
+          </div>
+        </div>
+
       </div>
     </div>
   );

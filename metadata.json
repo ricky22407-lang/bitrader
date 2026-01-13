@@ -1,5 +1,5 @@
 {
-  "name": "AI Crypto Bot Forge",
-  "description": "An AI-powered workspace to generate, configure, and visualize Python crypto trading bot structures for Binance.",
+  "name": "AI Trader",
+  "description": "A real-time, browser-based autonomous trading agent powered by Google Gemini 2.0 Flash. Keeps running in your active tab.",
   "requestFramePermissions": []
 }

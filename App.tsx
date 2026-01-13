@@ -1,193 +1,332 @@
-import React, { useState, useEffect, useRef } from 'react';
+
+import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import ConfigPanel from './components/ConfigPanel';
 import RealtimeChart from './components/RealtimeChart';
-import SimulatedChart from './components/SimulatedChart';
-import CodeViewer from './components/CodeViewer';
-import { BotConfig, StrategyType, Ticker, LogEntry, GeneratedContent } from './types';
-import { simulateTick, getAccountState } from './services/exchangeService';
-import { analyzeMarket } from './services/geminiService';
-import { pythonBotCode } from './utils/botTemplate';
-import { Activity, Terminal } from 'lucide-react';
+import TradingMonitor from './components/TradingMonitor';
+import SystemConsole from './components/SystemConsole'; 
+import SettingsModal from './components/SettingsModal';
+import { BotConfig, LogEntry, Portfolio, Trade, UserSettings } from './types';
+import { loadPortfolioState, getPortfolio, executeOrder, liquidateAllPositions, setTradingMode } from './services/exchangeService';
+import { saveToDB, loadFromDB } from './services/db';
+
+// Custom Hooks
+import { useAudio } from './hooks/useAudio';
+import { useMarketStream } from './hooks/useMarketStream';
+import { useAutoPilot } from './hooks/useAutoPilot';
+import { Zap, Eye } from 'lucide-react';
 
 const initialConfig: BotConfig = {
-  symbol: 'BTC/USDT',
-  pairs: ['BTC/USDT', 'ETH/USDT'],
-  timeframe: '1h',
-  riskPercentage: 2,
-  gridLevels: 5,
-  strategy: StrategyType.MOMENTUM,
-  isTestnet: true,
-  enableTelegram: false,
-  includeLogging: true,
-  includeWebsockets: true,
+  symbol: 'BTCUSDT', 
+  initialBudget: 10000,
+  riskLevel: 'MEDIUM',
+  minPulse: 30000,  
+  maxPulse: 300000, 
+  autoStart: false,
+  tradingMode: 'SIMULATION'
+};
+
+const initialUserSettings: UserSettings = {
+    binanceApiKey: '',
+    binanceSecretKey: '',
+    telegramBotToken: '',
+    telegramChatId: ''
 };
 
 const App: React.FC = () => {
+  // --- UI State ---
   const [config, setConfig] = useState<BotConfig>(initialConfig);
-  const [tickers, setTickers] = useState<Ticker[]>([]);
+  const [userSettings, setUserSettings] = useState<UserSettings>(initialUserSettings);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [portfolio, setPortfolio] = useState<Portfolio>(getPortfolio());
+  
+  // The Symbol currently displayed on Chart and being focused by Council
+  const [activeSymbol, setActiveSymbol] = useState<string>('BTCUSDT');
 
-  // Scroll logs to bottom
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  // --- Hooks ---
+  const { speak, isMuted, toggleMute } = useAudio();
 
-  // Simulation Loop
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const lastClose = tickers.length > 0 ? tickers[tickers.length - 1].close : 42000;
-      const newTicker = simulateTick(lastClose);
-      
-      setTickers(prev => {
-        const updated = [...prev, newTicker];
-        if (updated.length > 100) return updated.slice(-100);
-        return updated;
-      });
-
-      // AI Analysis Simulation
-      if (Math.random() < 0.1) { // 10% chance per tick to analyze
-         const decision = await analyzeMarket(
-           [...tickers, newTicker], 
-           config.strategy, 
-           'NONE' // Simplified position tracking for demo
-         );
-         
-         if (decision.action !== 'HOLD') {
-            addLog('AI', `Signal: ${decision.action} | Conf: ${decision.confidence}% | ${decision.reasoning}`);
-         }
-      }
-
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [tickers, config.strategy]);
-
-  const addLog = (type: LogEntry['type'], message: string) => {
-    setLogs(prev => [...prev, {
-      id: Math.random().toString(),
+  // Helper: Centralized Logging
+  const addLog = useCallback(async (type: LogEntry['type'], message: string, metadata?: any) => {
+    const entry: LogEntry = {
+      id: Math.random().toString(36).substr(2, 9),
       timestamp: Date.now(),
       type,
-      message
-    }].slice(-50));
+      message,
+      metadata
+    };
+    setLogs(prev => [...prev, entry].slice(-200)); 
+    try {
+      await saveToDB('logs', entry);
+    } catch (e) {
+      console.warn("Log save failed:", e);
+    }
+  }, []);
+
+  // Helper: Portfolio Refresh
+  const refreshPortfolio = useCallback(() => {
+    setPortfolio(getPortfolio());
+  }, []);
+
+  // Helper: Trigger Handler
+  const handleTriggerHit = useCallback((trade: Trade) => {
+     const msg = `Trigger Hit: ${trade.reason} at ${trade.price.toFixed(2)}`;
+     addLog('TRADE', msg);
+     speak(msg);
+     refreshPortfolio();
+  }, [addLog, speak, refreshPortfolio]);
+
+  // Helper: Stream Error Handler (Stable Reference)
+  const handleStreamError = useCallback((err: string) => {
+    if (!err.includes("Interrupted")) {
+        addLog('ERROR', err);
+    }
+  }, [addLog]);
+
+  // --- Core Logic Hooks ---
+  
+  // 1. Market Stream
+  const { activeTickers, marketMap, watchedSymbols } = useMarketStream(
+      isRunning, 
+      activeSymbol,
+      handleTriggerHit, 
+      handleStreamError
+  );
+
+  // 2. Auto Pilot
+  const { reports, currentStrategy, nextCouncilTime, forceScan, isEngineActive, currentPulse } = useAutoPilot({
+    isRunning,
+    config,
+    userSettings,
+    marketMap,
+    activeSymbol,
+    setActiveSymbol,
+    portfolio,
+    onLog: addLog,
+    onSpeak: speak,
+    refreshPortfolio
+  });
+
+  // --- Initialization ---
+  useEffect(() => {
+    const initSystem = async () => {
+      const savedPortfolio = await loadPortfolioState();
+      setPortfolio(savedPortfolio);
+      
+      const savedLogs = await loadFromDB('logs');
+      if (savedLogs && savedLogs.length > 0) {
+        setLogs(savedLogs.sort((a: LogEntry, b: LogEntry) => a.timestamp - b.timestamp).slice(-100));
+      }
+
+      // Load User Settings
+      const savedSettings = await loadFromDB('settings', 'config');
+      
+      // Merge saved settings with ENV variables (ENV takes priority if saved is empty)
+      const envSettings = {
+          binanceApiKey: process.env.VITE_BINANCE_API_KEY || '',
+          binanceSecretKey: process.env.VITE_BINANCE_SECRET_KEY || '',
+          telegramBotToken: process.env.VITE_TELEGRAM_BOT_TOKEN || '',
+          telegramChatId: process.env.VITE_TELEGRAM_CHAT_ID || ''
+      };
+
+      if (savedSettings) {
+          // If DB exists, use it, but fill in missing holes from ENV
+          const mergedSettings = {
+              ...savedSettings,
+              binanceApiKey: savedSettings.binanceApiKey || envSettings.binanceApiKey,
+              binanceSecretKey: savedSettings.binanceSecretKey || envSettings.binanceSecretKey,
+              telegramBotToken: savedSettings.telegramBotToken || envSettings.telegramBotToken,
+              telegramChatId: savedSettings.telegramChatId || envSettings.telegramChatId
+          };
+          setUserSettings(mergedSettings);
+      } else {
+          // If no DB, use ENV completely
+          setUserSettings(envSettings);
+          // Only save to DB if we actually have something from ENV
+          if (envSettings.binanceApiKey || envSettings.telegramBotToken) {
+              saveToDB('settings', { id: 'config', ...envSettings });
+          }
+      }
+    };
+    initSystem();
+  }, []);
+
+  // --- Handlers ---
+  const handleSaveSettings = async (newSettings: UserSettings) => {
+      setUserSettings(newSettings);
+      await saveToDB('settings', { id: 'config', ...newSettings });
+      addLog('INFO', "Settings updated and saved.");
   };
 
-  const handleGenerate = async () => {
-    setIsGenerating(true);
-    addLog('INFO', 'Initializing bot code generation...');
+  const handleToggle = () => {
+    if (!process.env.API_KEY) {
+        alert("Missing process.env.API_KEY");
+        return;
+    }
 
-    // Simulate AI processing delay
-    setTimeout(() => {
-      // Customize the template based on current config
-      // Note: We are using simple string replacement here for the demo. 
-      // In a real scenario, this might be more complex or handled by the LLM completely.
-      let customCode = pythonBotCode;
-      
-      // Update defaults in the Python code string
-      customCode = customCode.replace(
-        /"max_symbols": 5/, 
-        `"max_symbols": ${config.pairs.length}`
-      );
-      
-      customCode = customCode.replace(
-        /"risk_pct": 2.0/, 
-        `"risk_pct": ${config.riskPercentage}`
-      );
-      
-      customCode = customCode.replace(
-        /"is_testnet": False/, 
-        `"is_testnet": ${config.isTestnet ? 'True' : 'False'}`
-      );
-      
-      const summary = `
-## 生成報告
+    setIsRunning(!isRunning);
+    if (!isRunning) {
+        speak("System Armed. Global Scanner Active.");
+        addLog('INFO', `🔥 SYSTEM ARMED. Scanning ${watchedSymbols.length} top assets.`);
+    } else {
+        speak("System Disarmed.");
+        addLog('INFO', '🛑 SYSTEM DISARMED. Auto-trading stopped.');
+    }
+  };
 
-**策略模型**: ${config.strategy}
-**配置摘要**:
-- 交易對: ${config.pairs.join(', ')}
-- 風險設定: ${config.riskPercentage}% per trade
-- 環境: ${config.isTestnet ? 'Testnet' : 'Mainnet'}
-
-**下一步**:
-1. 下載 \`bot.py\`
-2. 安裝依賴 (自動處理)
-3. 編輯 \`config.json\` 填入您的 API Key
-4. 運行 \`python bot.py\`
-      `;
-
-      setGeneratedContent({
-        code: customCode,
-        summary: summary.trim()
-      });
+  const handlePanic = async () => {
+      if (!window.confirm("🚨 EMERGENCY KILL SWITCH: Liquidate ALL positions and Stop?")) return;
       
-      setIsGenerating(false);
-      addLog('INFO', 'Bot code generated successfully.');
-    }, 1500);
+      setIsRunning(false);
+      addLog('ERROR', "🚨 PANIC BUTTON ACTIVATED. INITIATING LIQUIDATION...");
+      speak("Emergency Protocol Activated. Liquidating.");
+      
+      try {
+          const count = await liquidateAllPositions("EMERGENCY KILL SWITCH");
+          refreshPortfolio();
+          addLog('INFO', `✅ EMERGENCY COMPLETE. ${count} positions liquidated.`);
+          speak("Liquidation Complete.");
+      } catch (e) {
+          addLog('ERROR', `Liquidation Failed: ${e}`);
+      }
+  };
+
+  const handleManualTrade = async (side: 'BUY' | 'SELL', amountPct: number) => {
+    try {
+        const reason = "Manual Override";
+        addLog('INFO', `👨‍✈️ Manual ${side} ${activeSymbol} (${amountPct * 100}%)...`);
+        
+        const currentPrice = activeTickers[activeTickers.length - 1]?.close || 0;
+        const sl = side === 'BUY' ? currentPrice * 0.95 : undefined;
+        const trailing = side === 'BUY' ? 1.5 : undefined;
+
+        const trade = await executeOrder(
+            side, amountPct, activeSymbol, reason, sl, undefined, "Manual Command", trailing
+        );
+
+        if (trade) {
+            speak(`Manual ${side} Confirmed.`);
+            addLog('TRADE', `${side} Executed at ${trade.price.toFixed(2)}.`);
+            refreshPortfolio();
+        } else {
+            speak("Trade failed.");
+            addLog('ERROR', `Manual ${side} Failed.`);
+        }
+    } catch (e: any) {
+        if (e.message === 'CORS_BLOCK') {
+            alert("To trade manually with REAL MONEY, please install the 'Allow CORS' browser extension.");
+        }
+        addLog('ERROR', `Manual Trade Exception: ${e.message}`);
+    }
+  };
+
+  const handleForceScan = () => {
+      if (!isRunning) return alert("Please arm the system first.");
+      speak("Forcing Global Scan.");
+      addLog('INFO', "⚡ COMMAND OVERRIDE: Forcing Global Analysis...");
+      forceScan();
   };
 
   return (
-    <div className="min-h-screen bg-[#0b0f19] text-slate-200 flex flex-col font-sans selection:bg-blue-500/30">
-      <Header />
+    <div className="min-h-screen bg-[#0b0f19] text-slate-200 flex flex-col font-sans selection:bg-indigo-500/30">
+      <Header 
+        isMuted={isMuted}
+        onToggleMute={toggleMute}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
+
+      <SettingsModal 
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={userSettings}
+        onSave={handleSaveSettings}
+      />
+
+      {/* Status Bar */}
+      {isRunning && (
+        <div className={`px-6 py-1 text-center border-b border-opacity-50 transition-colors duration-500 ${isEngineActive ? 'bg-indigo-900/30 border-indigo-500/30' : 'bg-amber-900/30 border-amber-500/30'}`}>
+            <p className="text-[10px] font-mono flex justify-center gap-3 items-center">
+                <span className={`flex items-center gap-1 ${isEngineActive ? 'text-indigo-300' : 'text-amber-300'}`}>
+                    <Zap className={`w-3 h-3 ${isEngineActive ? 'animate-pulse' : ''}`} fill="currentColor" />
+                    {isEngineActive ? "INSOMNIA ENGINE: ACTIVE" : "ENGINE WARMING UP..."}
+                </span>
+                <span className="opacity-50">|</span>
+                <span className="text-emerald-400 font-bold flex items-center gap-1">
+                    ❤️ PULSE: {Math.round(currentPulse / 1000)}s
+                </span>
+                <span className="opacity-50">|</span>
+                <span className="text-blue-400 flex items-center gap-1">
+                    <Eye className="w-3 h-3" /> WATCHING: {watchedSymbols.length} ASSETS
+                </span>
+            </p>
+        </div>
+      )}
       
-      <main className="flex-1 p-6 grid grid-cols-12 gap-6 max-w-[1920px] mx-auto w-full">
-        {/* Left Column: Configuration */}
-        <div className="col-span-12 lg:col-span-3 h-[calc(100vh-8rem)] min-h-[600px]">
-          <ConfigPanel 
-            config={config} 
-            setConfig={setConfig} 
-            onGenerate={handleGenerate}
-            isGenerating={isGenerating}
-          />
-        </div>
-
-        {/* Middle Column: Charts & Logs */}
-        <div className="col-span-12 lg:col-span-6 flex flex-col gap-6 h-[calc(100vh-8rem)]">
-          {/* Top: Realtime Chart */}
-          <div className="flex-1 min-h-[300px]">
-             <div className="flex items-center gap-2 mb-2">
-                <Activity className="w-4 h-4 text-emerald-400" />
-                <span className="text-sm font-semibold text-white">即時市場數據 (Simulation)</span>
-             </div>
-             <RealtimeChart data={tickers} />
-          </div>
-          
-          {/* Middle: Backtest/Sim Chart */}
-          <div className="h-[200px] border border-slate-800 bg-slate-900/50 rounded-xl p-4">
-             <SimulatedChart />
-          </div>
-
-          {/* Bottom: Terminal Logs */}
-          <div className="h-[200px] border border-slate-800 bg-slate-950 rounded-xl p-4 font-mono text-xs overflow-hidden flex flex-col shadow-inner shadow-black/50">
-            <div className="flex items-center gap-2 mb-2 text-slate-400 border-b border-slate-800 pb-2">
-              <Terminal className="w-3 h-3" />
-              <span>System Output</span>
+      {/* Scrollable Main Content */}
+      <main className="flex-1 p-6 flex flex-col gap-6 max-w-[1920px] mx-auto w-full pb-20">
+        
+        {/* ROW 1: DASHBOARD (Config | Chart | Monitor) */}
+        {/* Use a responsive grid but enforce min-heights for spaciousness */}
+        <div className="grid grid-cols-12 gap-6 min-h-[750px] lg:h-[80vh]">
+             
+             {/* Left: Config */}
+            <div className="col-span-12 lg:col-span-3 h-full overflow-hidden flex flex-col">
+                <ConfigPanel 
+                    config={config} 
+                    setConfig={setConfig} 
+                    isRunning={isRunning}
+                    onToggle={handleToggle}
+                    onPanic={handlePanic}
+                    onManualTrade={handleManualTrade}
+                    onForceScan={handleForceScan}
+                    portfolioValue={portfolio.equity}
+                />
             </div>
-            <div className="flex-1 overflow-y-auto space-y-1 pr-2 custom-scrollbar">
-              {logs.map(log => (
-                <div key={log.id} className="flex gap-2">
-                  <span className="text-slate-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                  <span className={`font-bold ${
-                    log.type === 'ERROR' ? 'text-red-500' : 
-                    log.type === 'AI' ? 'text-purple-400' : 
-                    log.type === 'TRADE' ? 'text-emerald-400' : 'text-blue-400'
-                  }`}>
-                    {log.type}
-                  </span>
-                  <span className="text-slate-300">{log.message}</span>
+
+            {/* Center: Chart */}
+            <div className="col-span-12 lg:col-span-6 h-full flex flex-col min-h-[500px]">
+                 <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden relative shadow-lg flex flex-col">
+                    <div className="absolute top-4 left-4 z-10 flex items-center gap-3">
+                        <div className="bg-slate-800/80 backdrop-blur px-3 py-1 rounded text-sm font-bold text-white border border-slate-600">
+                        {activeSymbol}
+                        </div>
+                        <div className={`px-2 py-1 rounded text-xs font-mono font-bold ${activeTickers.length > 0 && activeTickers[activeTickers.length-1].close > activeTickers[activeTickers.length-2]?.close ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        ${activeTickers.length > 0 ? activeTickers[activeTickers.length-1].close.toFixed(4) : '---'}
+                        </div>
+                        {isRunning && (
+                        <div className="bg-indigo-600/20 text-indigo-300 px-2 py-1 rounded text-xs border border-indigo-500/30 animate-pulse flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full"></span>
+                            {currentStrategy}
+                        </div>
+                        )}
+                    </div>
+                    
+                    {isRunning && nextCouncilTime > Date.now() && (
+                        <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+                            <div className="text-[10px] text-slate-500 font-mono bg-slate-900/80 px-2 py-1 rounded border border-slate-700">
+                                Next Scan: {Math.ceil((nextCouncilTime - Date.now()) / 1000)}s
+                            </div>
+                        </div>
+                    )}
+
+                    <RealtimeChart data={activeTickers} portfolio={portfolio} />
                 </div>
-              ))}
-              <div ref={logsEndRef} />
             </div>
-          </div>
+
+            {/* Right: Monitor */}
+            <div className="col-span-12 lg:col-span-3 h-full overflow-hidden flex flex-col">
+                <TradingMonitor portfolio={portfolio} logs={logs} reports={reports} />
+            </div>
         </div>
 
-        {/* Right Column: Code Viewer */}
-        <div className="col-span-12 lg:col-span-3 h-[calc(100vh-8rem)]">
-          <CodeViewer content={generatedContent} isGenerating={isGenerating} />
+        {/* ROW 2: CONSOLE (Long & Tall) */}
+        <div className="w-full h-[600px] flex-shrink-0">
+            <SystemConsole logs={logs} />
         </div>
+
       </main>
     </div>
   );
