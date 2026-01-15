@@ -1,0 +1,101 @@
+exchange:
+  name: binanceusdm
+  api_key: 7H6uVT95ETMMycyMf13vbCH6hlnXxg8pFOGGxLRt5W0iAcBO9MJoyRfYb0yuVBbm
+  secret: blPNBpKX1FchhGL85ZI0Et9MkgDtmiUw0AO7iN14SmoEsKrEKC1VmInhqAepA8tX
+  password: ''
+mode:
+  live_trading: true
+  live_unlock: I_UNDERSTAND
+  base_currency: USDT
+  default_budget: 50
+  report_timezone: Asia/Taipei
+budget_mode: notional    # 50 USDT 視為『總名目』，按權重分配到各標的（不乘槓桿進名目）
+autopilot:
+  enable_rate_limit: true
+  budget_usdt: 50.0
+  max_candidates: 3
+  leverage: 10
+  live: true
+  interval_min: 30        # 【修改】執行間隔改為 30 分鐘
+discover:
+  scan_all: false         # 【修改】關閉全市場掃描，只掃描指定清單
+  top_k: 30
+  min_usdt_vol_24h: 5000000
+  timeframe: 1h
+risk:
+  leverage: 10
+  max_account_risk_pct: 2.0
+  position_value_cap_usd: 200
+storage:
+  db: trades.db
+scheduler:
+  monitor:
+    enable: true
+    interval_sec: 60
+  agent:
+    enable: true
+    cadence_min: 30       # 【修改】AI 決策週期改為 30 分鐘
+chatgpt_strategy:
+  symbols:                # 【修改】鎖定高流動性幣種清單
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+  - LINK/USDT
+  - DOGE/USDT
+  entry_rules:
+    need_at_least: 2
+    rsi_overbought: 70
+    rsi_oversold: 30
+    ema_fast: 20
+    ema_slow: 60
+    volume_lookback_fast: 3
+    volume_lookback_slow: 10
+    upper_shadow_ratio: 0.6
+  exit_rules:
+    initial_stop_pct: 2.0
+    trail_steps:
+    - pnl_gain_pct: 2
+      stop_to_lock_pct: 0
+    - pnl_gain_pct: 4
+      stop_to_lock_pct: 2
+    - pnl_gain_pct: 6
+      stop_to_lock_pct: 4
+    take_profit_pct: 8
+    panic_stop_pct: 10
+openai:
+  api_key: "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"
+  model: gpt-4o-mini
+agent:
+  enable: true
+  cadence_min: 30 # 與 scheduler.agent.cadence_min 保持一致
+  authority:
+    entry: true
+    exit: true
+    trail: true
+  risk_guard:
+    max_positions: 3
+    per_position_budget_pct: 34
+  advanced:
+    pyramid_add_levels:
+    - 4
+    - 8
+    pyramid_add_ratio: 0.2
+    daily_loss_limit_pct: 5
+    atr_volatility_gate_pct: 2.5
+    drawdown_soft_brake_pct: 12
+notify:
+  telegram:
+    enable: false
+    bot_token: ''
+    chat_id: ''
+  email:
+    enable: false
+    smtp_host: ''
+    smtp_port: 587
+    username: ''
+    password: ''
+    to: ''
+report:
+  daily_enable: true
+  daily_hour: 9
+require_gpt: true
