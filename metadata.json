@@ -1,5 +1,0 @@
-{
-  "name": "AI Trader",
-  "description": "A real-time, browser-based autonomous trading agent powered by Google Gemini 2.0 Flash. Keeps running in your active tab.",
-  "requestFramePermissions": []
-}
